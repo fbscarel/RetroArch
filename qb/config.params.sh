@@ -206,6 +206,7 @@ HAVE_LIBSHAKE=no           # libShake haptic feedback support
 HAVE_CHECK=no              # check support for unit tests
 HAVE_WIFI=no               # wifi driver support
 HAVE_CRTSWITCHRES=auto     # CRT mode switching support (requires C++11)
+HAVE_MISTER=auto           # MISTER output
 HAVE_MEMFD_CREATE=auto     # libc supports memfd_create
 C89_CRTSWITCHRES=no
 HAVE_MICROPHONE=yes        # Microphone support

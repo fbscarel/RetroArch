@@ -2567,6 +2567,15 @@ ifeq ($(HAVE_CRTSWITCHRES), 1)
    LIBS += -lstdc++
 endif
 
+
+# MISTER output
+ifeq ($(HAVE_MISTER), 1)
+   INCLUDE_DIRS += -I$(DEPS_DIR)/mister
+   INCLUDE_DIRS += -I$(DEPS_DIR)/lz4
+   OBJ += $(DEPS_DIR)/lz4/lz4.o \
+          $(DEPS_DIR)/mister/mister.o
+endif
+
 ifeq ($(HAVE_COMPRESSION), 1)
    DEFINES += -DHAVE_COMPRESSION
    OBJ     += tasks/task_decompress.o

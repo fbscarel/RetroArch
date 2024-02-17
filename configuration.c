@@ -1560,6 +1560,7 @@ static struct config_array_setting *populate_settings_array(
    SETTING_ARRAY("midi_output",                  settings->arrays.midi_output, true, DEFAULT_MIDI_OUTPUT, true);
 
    SETTING_ARRAY("video_driver",                 settings->arrays.video_driver, false, NULL, true);
+   SETTING_ARRAY("mister_ip",                    settings->arrays.mister_ip, false, NULL, true); //psakhis
    SETTING_ARRAY("video_context_driver",         settings->arrays.video_context_driver, false, NULL, true);
    SETTING_ARRAY("crt_switch_timings",           settings->arrays.crt_switch_timings, false, NULL, true);
 
@@ -1879,6 +1880,7 @@ static struct config_bool_setting *populate_settings_bool(
 
    SETTING_BOOL("crt_switch_resolution_use_custom_refresh_rate", &settings->bools.crt_switch_custom_refresh_enable, true, false, false);
    SETTING_BOOL("crt_switch_hires_menu",         &settings->bools.crt_switch_hires_menu, true, false, true);
+   SETTING_BOOL("mister_lz4",                    &settings->bools.mister_lz4, true, false, true); //psakhis
    SETTING_BOOL("video_shader_enable",           &settings->bools.video_shader_enable, true, DEFAULT_SHADER_ENABLE, false);
    SETTING_BOOL("video_shader_watch_files",      &settings->bools.video_shader_watch_files, true, DEFAULT_VIDEO_SHADER_WATCH_FILES, false);
    SETTING_BOOL("video_shader_remember_last_dir", &settings->bools.video_shader_remember_last_dir, true, DEFAULT_VIDEO_SHADER_REMEMBER_LAST_DIR, false);
@@ -1912,6 +1914,7 @@ static struct config_bool_setting *populate_settings_bool(
    SETTING_BOOL("video_hdr_expand_gamut",        &settings->bools.video_hdr_expand_gamut, true, DEFAULT_VIDEO_HDR_EXPAND_GAMUT, false);
    SETTING_BOOL("video_vsync",                   &settings->bools.video_vsync, true, DEFAULT_VSYNC, false);
    SETTING_BOOL("video_adaptive_vsync",          &settings->bools.video_adaptive_vsync, true, DEFAULT_ADAPTIVE_VSYNC, false);
+   SETTING_BOOL("video_mister_enable",           &settings->bools.video_mister_enable, true, DEFAULT_VIDEO_MISTER_ENABLE, false); //psakhis
    SETTING_BOOL("video_hard_sync",               &settings->bools.video_hard_sync, true, DEFAULT_HARD_SYNC, false);
    SETTING_BOOL("video_waitable_swapchains",     &settings->bools.video_waitable_swapchains, true, DEFAULT_WAITABLE_SWAPCHAINS, false);
    SETTING_BOOL("video_disable_composition",     &settings->bools.video_disable_composition, true, DEFAULT_DISABLE_COMPOSITION, false);

@@ -386,6 +386,10 @@
 /* GL specific */
 #define DEFAULT_ADAPTIVE_VSYNC false
 
+/* MISTER specific */
+#define DEFAULT_VIDEO_MISTER_ENABLE false
+
+
 /* Attempts to hard-synchronize CPU and GPU.
  * Can reduce latency at cost of performance. */
 #define DEFAULT_HARD_SYNC false
