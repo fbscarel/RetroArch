@@ -29,7 +29,13 @@
 
 #include <features/features_cpu.h>
 
+#include "../retroarch.h"
+#include "../audio/audio_driver.h"
 #include "../verbosity.h"
+
+#ifdef HAVE_MENU
+#include "../menu/menu_driver.h"
+#endif
 
 #define mister_CMD_CLOSE 1
 #define mister_CMD_INIT 2
@@ -58,9 +64,13 @@ typedef union
    uint8_t byte;
 } bitByte;
 
+void mister_set_texture_frame(char *frame, unsigned width, unsigned height);
+void mister_draw(video_driver_state_t *video_st, const void *data, unsigned width, unsigned height, size_t pitch);
 void mister_CmdClose(void);
 void mister_CmdInit(const char* mister_host, short mister_port, bool lz4_frames, uint32_t sound_rate, uint8_t sound_chan);
-void mister_CmdSwitchres(int w, int h, double vfreq, int orientation);
+void mister_set_mode(sr_mode *srm);
+void mister_CmdSwitchres(sr_mode *srm);
+//void mister_CmdSwitchres(int w, int h, double vfreq, int orientation);
 void mister_CmdBlit(char *bufferFrame, uint16_t vsync);
 void mister_CmdAudio(const void *bufferFrame, uint32_t sizeSound, uint8_t soundchan);
 
@@ -128,6 +138,7 @@ typedef struct mister_video_info
    char m_fb[mister_MAX_BUFFER_HEIGHT * mister_MAX_BUFFER_WIDTH * 3];
    char m_fb_compressed[mister_MAX_BUFFER_HEIGHT * mister_MAX_BUFFER_WIDTH * 3];
    char inp_buf[2][mister_MAX_LZ4_BLOCK + 1];
+   char *menu_mister_fb;
 } mister_video_t;
 
 //Internal functions

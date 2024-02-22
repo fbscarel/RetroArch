@@ -619,7 +619,7 @@ static void audio_driver_flush(audio_driver_state_t *audio_st,
 
 #ifdef HAVE_MISTER //psakhis
       settings_t *settings   = config_get_ptr();
-      if (settings->bools.video_mister_enable)
+      if (settings->bools.video_mister_enable && audio_st->output_mister_samples_conv_buf[0])
       {
          memcpy(&audio_st->output_mister_samples_conv_buf[audio_st->output_mister_samples], output_data, output_frames << 1);
          audio_st->output_mister_samples += output_frames;

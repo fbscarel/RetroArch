@@ -1900,6 +1900,10 @@ static void retroarch_deinit_drivers(struct retro_callbacks *cbs)
    }
 #endif
 
+#if defined HAVE_MISTER //psakhis
+   mister_CmdClose(); //psakhis
+#endif
+
 #if defined(HAVE_CRTSWITCHRES)
    /* Switchres deinit */
    if (video_st->flags & VIDEO_FLAG_CRT_SWITCHING_ACTIVE)

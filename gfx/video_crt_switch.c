@@ -216,8 +216,10 @@ static bool crt_sr2_init(videocrt_switch_t *p_switch,
          sr_set_option(SR_OPT_SUPER_WIDTH, sw);
       }
 
-      if (p_switch->kms_ctx)
+      settings_t *settings  = config_get_ptr();
+      if (p_switch->kms_ctx || settings->bools.video_mister_enable)
             p_switch->rtn = sr_init_disp("dummy", NULL);
+
       else if (monitor_index + 1 > 0)
       {
          RARCH_LOG("[CRT] Monitor index manual: %s.\n", &index[0]);
@@ -312,6 +314,7 @@ static void switch_res_crt(
       char current_content_dir[DIR_MAX_LENGTH];
       double rr              = p_switch->ra_core_hz;
       const char *_core_name = (const char*)runloop_state_get_ptr()->system.info.library_name;
+      settings_t *settings   = config_get_ptr();
 
 
 
@@ -388,6 +391,8 @@ static void switch_res_crt(
          get_modeline_for_kms(p_switch, &srm);
          video_driver_set_video_mode(srm.width, srm.height, true);
       }
+      else if (settings->bools.video_mister_enable)
+         mister_set_mode(&srm);
       else if (p_switch->khr_ctx)
          RARCH_WARN("[CRT] Vulkan -> Can't modeswitch for now.\n");
       else

@@ -1,12 +1,267 @@
 #include "mister.h"
-#include "../retroarch.h"
 
-mister_video_t mister_video;
+static mister_video_t mister_video;
+static sr_mode mister_mode;
+static char *texture_frame = 0;
+static unsigned menu_width = 0;
+static unsigned menu_height = 0;
+static bool modeline_active = 0;
+static bool mode_switch_pending = 0;
+
+void mister_set_texture_frame(char *frame, unsigned width, unsigned height)
+{
+   texture_frame = frame;
+   menu_width = width;
+   menu_height = height;
+}
+
+void mister_draw(video_driver_state_t *video_st, const void *data, unsigned width, unsigned height, size_t pitch)
+{
+   settings_t *settings  = config_get_ptr();
+   struct retro_system_av_info *av_info   = &video_st->av_info;
+   const struct retro_system_timing *info = (const struct retro_system_timing*)&av_info->timing;
+   audio_driver_state_t *audio_st  = audio_state_get_ptr();
+   bool blitMister = false;
+   bool menu_on = false;
+
+   if (retroarch_get_rotation() & 1)
+   {
+      unsigned tmp = width;
+      width = height;
+      height = tmp;
+   }
+
+#ifdef HAVE_MENU
+   struct menu_state *menu_st              = menu_state_get_ptr();
+   if (menu_st->flags & MENU_ST_FLAG_ALIVE && texture_frame != 0)
+   {
+      menu_on = true;
+      width = menu_width;
+      height = menu_height;
+      pitch = width * sizeof(uint16_t);
+
+   }
+#endif
+
+   if (settings->bools.video_mister_enable && audio_st->output_mister && audio_st->output_mister_samples)
+   {
+      mister_CmdAudio(audio_st->output_mister_samples_conv_buf, audio_st->output_mister_samples >> 1, 2);
+      audio_st->output_mister_samples = 0;
+   }
+
+   if (settings->bools.video_mister_enable && video_st->frame_count > 0 && !blitMister)
+   {
+      if (!mister_video.isConnected)
+         mister_CmdInit(settings->arrays.mister_ip, 32100, settings->bools.mister_lz4, settings->uints.audio_output_sample_rate, 2);
+
+      if (mode_switch_pending)
+         mister_CmdSwitchres(&mister_mode);
+
+      if (!modeline_active)
+         return;
+
+      retro_time_t mister_bt1  = cpu_features_get_time_usec();
+
+      uint32_t totalPixels = height * width;
+      uint32_t numPix = 0;
+
+      if (mister_is480p() && height < 480)
+      {
+         totalPixels = totalPixels << 1;
+      }
+
+      if ((mister_isInterlaced() && height > 288) || (mister_isDownscaled()))
+      {
+         totalPixels = totalPixels >> 1;
+      }
+
+      uint8_t *mister_buffer = (uint8_t*)malloc(1024 * 768 * 3);
+      unsigned c = 0;
+
+      uint8_t field = 0;
+
+      if (!blitMister && mister_buffer && (video_st->frame_cache_data != RETRO_HW_FRAME_BUFFER_VALID || menu_on) && pitch > 0) //software rendered
+      {
+         field = mister_GetField();
+         blitMister = true;
+         union
+         {
+            const uint8_t *u8;
+            const uint16_t *u16;
+            const uint32_t *u32;
+         } u;
+
+         u.u8 = menu_on? (const uint8_t*)texture_frame : (const uint8_t*)data;
+
+         int x_start = (mister_video.width - width) / 2;
+         int y_start = (mister_video.height - height) / 2;
+
+         for (u_int j = field; j < height; j++, u.u8 += pitch)
+         {
+            c = ((j + y_start) * mister_video.width + x_start) * 3;
+
+            for (u_int i = 0; i < width; i++)
+            {
+               if (menu_on)
+               {
+                  uint16_t pixel = u.u16[i];
+                  mister_buffer[c + 0] = (pixel >>  8); //b
+                  mister_buffer[c + 1] = (pixel >>  4); //g
+                  mister_buffer[c + 2] = (pixel >>  0); //r
+               }
+
+               else if (video_st->pix_fmt == RETRO_PIXEL_FORMAT_RGB565)
+               {
+                  uint16_t pixel = u.u16[i];
+                  uint8_t r  = (pixel >> 11) & 0x1f;
+                  uint8_t g  = (pixel >>  5) & 0x3f;
+                  uint8_t b  = (pixel >>  0) & 0x1f;
+                  mister_buffer[c + 0] = (b << 3) | (b >> 2);
+                  mister_buffer[c + 1] = (g << 2) | (g >> 4);
+                  mister_buffer[c + 2] = (r << 3) | (r >> 2);
+               }
+               else
+               {
+                  uint32_t pixel = u.u32[i];
+                  mister_buffer[c + 0] = (pixel >>  0) & 0xff; //b
+                  mister_buffer[c + 1] = (pixel >>  8) & 0xff; //g
+                  mister_buffer[c + 2] = (pixel >> 16) & 0xff; //r
+               }
+               c += 3;
+               numPix++;
+               if (numPix >= totalPixels)
+                  break;
+            }
+            if (numPix >= totalPixels)
+               break;
+
+            //if ((mister_isInterlaced() && height > 288) || mister_isDownscaled())
+            if (mister_isInterlaced())
+               u.u8 += pitch;
+
+            if (mister_is480p() && height < 480) //do scanlines for 31khz
+            {
+               for(uint32_t x = 0; x < width; x++)
+               {
+                  mister_buffer[c + 0] = 0x00;
+                  mister_buffer[c + 1] = 0x00;
+                  mister_buffer[c + 2] = 0x00;
+                  c += 3;
+                  numPix++;
+
+                  if (numPix >= totalPixels)
+                     break;
+               }
+               if (numPix >= totalPixels)
+                  break;
+            }
+         }
+      }
+
+      if (!blitMister && mister_buffer && data == RETRO_HW_FRAME_BUFFER_VALID && video_st->frame_cache_data) //hardware rendered
+      {
+         struct video_viewport vp = { 0 };
+         video_driver_get_viewport_info(&vp);
+         uint16_t mister_width = mister_GetWidth();
+         uint16_t mister_height = mister_GetHeight();
+
+         if (vp.width != mister_width || vp.height != mister_height || video_st->frame_count == 1)
+         {
+            vp.x                = 0;
+            vp.y                = 0;
+            vp.width            = mister_width;
+            vp.height           = mister_height;
+            vp.full_width       = mister_width;
+            vp.full_height      = mister_height;
+
+            video_st->aspect_ratio = aspectratio_lut[ASPECT_RATIO_CUSTOM].value;
+            settings->uints.video_aspect_ratio_idx = ASPECT_RATIO_CUSTOM;
+            settings->video_viewport_custom = vp;
+            video_driver_set_aspect_ratio();
+
+            video_driver_update_viewport(&vp, false, true);
+         }
+
+         video_driver_get_viewport_info(&vp);
+         //printf("%d %d %d %d\n",mister_width,mister_height,vp.width,vp.height);
+         uint8_t *bit24_image = (uint8_t*)malloc(vp.width*vp.height*3);
+
+         if (bit24_image && vp.width == mister_width && vp.height == mister_height && video_st->current_video->read_viewport && video_st->current_video->read_viewport(video_st->data, bit24_image, false))
+         {
+            //printf("frame %d size %d width %d %d height %d %d pitch %d\n",video_st->frame_count , vp.width*vp.height*3, width, vp.width, height,vp.height, pitch);
+            field = mister_GetField();
+            blitMister = true;
+            const uint8_t *u8 = (const uint8_t*)bit24_image;
+            u8 += (vp.height * vp.width * 3) - 1;
+
+            for(uint32_t i=field; i<vp.height; i++, u8 -= vp.width*3)
+            {
+               for (uint32_t j=0; j<vp.width;j++)
+               {
+                  uint32_t pix = j * 3;
+                  mister_buffer[c + 0] = u8[pix+1];
+                  mister_buffer[c + 1] = u8[pix+2];
+                  mister_buffer[c + 2] = u8[pix];
+
+                  c+=3;
+                  numPix++;
+                  if (numPix >= totalPixels)
+                     break;
+               }
+               if (numPix >= totalPixels)
+                  break;
+
+               if ((mister_isInterlaced() && vp.height > 288) || mister_isDownscaled())
+                 u8 -= vp.width*3;
+
+               if (mister_is480p() && vp.height < 480) //do scanlines for 31khz
+               {
+                  for(uint32_t x = 0; x < vp.width; x++)
+                  {
+                     mister_buffer[c + 0] = 0x00;
+                     mister_buffer[c + 1] = 0x00;
+                     mister_buffer[c + 2] = 0x00;
+                     c += 3;
+                     numPix++;
+
+                     if (numPix >= totalPixels)
+                         break;
+                  }
+                  if (numPix >= totalPixels)
+                    break;
+               }
+            }
+         }
+         free(bit24_image);
+      }
+
+      if (blitMister)
+      {
+         int mister_vsync = 1;
+         if (settings->bools.video_frame_delay_auto && video_st->frame_delay_effective > 0)
+         {
+            mister_vsync = height / (16 / video_st->frame_delay_effective);
+         }
+         else if (settings->uints.video_frame_delay > 0)
+         {
+            mister_vsync = height / (16 / settings->uints.video_frame_delay);
+         }
+         mister_CmdBlit((char *)&mister_buffer[0], mister_vsync);
+         retro_time_t mister_bt2  = cpu_features_get_time_usec();
+         mister_setBlitTime(mister_bt2 - mister_bt1);
+      }
+
+      free(mister_buffer);
+   }
+}
+
 
 void mister_CmdClose(void)
 {
    if (!mister_video.isConnected)
       return;
+
+   RARCH_LOG("[MiSTer] Sending CMD_CLOSE...\n");
 
    char buffer[1];
    buffer[0] = mister_CMD_CLOSE;
@@ -18,27 +273,12 @@ void mister_CmdClose(void)
 #else
    close(mister_video.sockfd);
 #endif
+   mister_video.isConnected = 0;
 }
 
 void mister_CmdInit(const char* mister_host, short mister_port, bool lz4_frames,uint32_t sound_rate, uint8_t sound_chan)
 {
-   if (mister_video.isConnected)
-      return;
-
    char buffer[4];
-
-   sr_init();
-
-   // to do better find ini files
-   const char *_core_name = (const char*)runloop_state_get_ptr()->system.info.library_name;
-   char ini_file[160];
-   strcpy(ini_file, "config/");
-   strcat(ini_file, _core_name);
-   strcat(ini_file, "/");
-   strcat(ini_file, _core_name);
-   strcat(ini_file, ".switchres.ini");
-   RARCH_LOG("[MiSTer] Core switchres configuration on %s...\n", ini_file);
-   sr_load_ini(ini_file);
 
 #ifdef _WIN32
 
@@ -153,8 +393,23 @@ void mister_CmdInit(const char* mister_host, short mister_port, bool lz4_frames,
    mister_video.isConnected = true;
 }
 
-void mister_CmdSwitchres(int w, int h, double vfreq, int orientation)
+
+void mister_set_mode(sr_mode *srm)
 {
+   // Check if mode is the same as previous
+   if (memcmp(&mister_mode, srm, sizeof(sr_mode)) == 0)
+      return;
+
+   // otherwise store it
+   memcpy(&mister_mode, srm, sizeof(sr_mode));
+
+   // Signal mode switch pending
+   mode_switch_pending = 1;
+}
+
+void mister_CmdSwitchres(sr_mode *srm)
+{
+/*
    if (!mister_video.isConnected)
       return;
 
@@ -163,10 +418,6 @@ void mister_CmdSwitchres(int w, int h, double vfreq, int orientation)
 
    if (w == mister_video.width_core && h == mister_video.height_core && vfreq == mister_video.vfreq_core)
       return;
-
-   mister_video.width_core = w;
-   mister_video.height_core = h;
-   mister_video.vfreq_core = vfreq;
 
    unsigned char retSR;
    sr_mode swres_result;
@@ -184,62 +435,63 @@ void mister_CmdSwitchres(int w, int h, double vfreq, int orientation)
    if (h > 288 && h <= 400 && mister_is15()) h = 480; //fix height dosbox-pure
 
    retSR = sr_add_mode(w, h, vfreq, sr_mode_flags, &swres_result);
-   if (retSR)
+*/
+   if (srm == 0)
+      return;
+
+   RARCH_LOG("[MiSTer] Video_SetSwitchres - (result %dx%d@%f) - x=%.4f y=%.4f stretched(%d)\n", srm->width, srm->height,srm->vfreq, srm->x_scale, srm->y_scale, srm->is_stretched);
+
+   char buffer[26];
+
+   double px = (double) srm->pclock / 1000000.0;
+   uint16_t udp_hactive = srm->width;
+   uint16_t udp_hbegin = srm->hbegin;
+   uint16_t udp_hend = srm->hend;
+   uint16_t udp_htotal = srm->htotal;
+   uint16_t udp_vactive = srm->height;
+   uint16_t udp_vbegin = srm->vbegin;
+   uint16_t udp_vend = srm->vend;
+   uint16_t udp_vtotal = srm->vtotal;
+   uint8_t  udp_interlace = srm->interlace;
+
+   mister_video.width = udp_hactive;
+   mister_video.height = udp_vactive;
+   mister_video.lines_padding = 0; //(udp_vactive > h && udp_vactive != h * 2) ? udp_vactive - h : 0;
+   mister_video.vfreq = srm->refresh;
+   mister_video.lines = udp_vtotal;
+   mister_video.interlaced = udp_interlace;
+   mister_video.downscaled = 0;
+
+   mister_video.widthTime = round((double) udp_htotal * (1 / px)); //in usec, time to raster 1 line
+   mister_video.frameTime = mister_video.widthTime * udp_vtotal;
+
+   if (mister_video.interlaced)
    {
-      RARCH_LOG("[MiSTer] Video_SetSwitchres - (result %dx%d@%f) - x=%.4f y=%.4f stretched(%d)\n", swres_result.width, swres_result.height,swres_result.vfreq, swres_result.x_scale, swres_result.y_scale, swres_result.is_stretched);
+      mister_video.frameField = 0;
+      mister_video.frameTime = mister_video.frameTime >> 1;
    }
-
-   if (retSR && (swres_result.width != mister_video.width || swres_result.height != mister_video.height || mister_video.vfreq != swres_result.vfreq))
+/*
+   if (h > mister_video.height)
    {
-      char buffer[26];
-
-      double px = (double) swres_result.pclock / 1000000.0;
-      uint16_t udp_hactive = swres_result.width;
-      uint16_t udp_hbegin = swres_result.hbegin;
-      uint16_t udp_hend = swres_result.hend;
-      uint16_t udp_htotal = swres_result.htotal;
-      uint16_t udp_vactive = swres_result.height;
-      uint16_t udp_vbegin = swres_result.vbegin;
-      uint16_t udp_vend = swres_result.vend;
-      uint16_t udp_vtotal = swres_result.vtotal;
-      uint8_t  udp_interlace = swres_result.interlace;
-
-      mister_video.width = udp_hactive;
-      mister_video.height = udp_vactive;
-      mister_video.lines_padding = (udp_vactive > h && udp_vactive != h * 2) ? udp_vactive - h : 0;
-      mister_video.vfreq = vfreq;
-      mister_video.lines = udp_vtotal;
-      mister_video.interlaced = udp_interlace;
-      mister_video.downscaled = 0;
-
-      mister_video.widthTime = round((double) udp_htotal * (1 / px)); //in usec, time to raster 1 line
-      mister_video.frameTime = mister_video.widthTime * udp_vtotal;
-
-      if (mister_video.interlaced)
-      {
-         mister_video.frameField = 0;
-         mister_video.frameTime = mister_video.frameTime >> 1;
-      }
-
-      if (h > mister_video.height)
-      {
-         mister_video.downscaled = 1;
-      }
-
-      RARCH_LOG("[MiSTer] Sending CMD_SWITCHRES...\n");
-      buffer[0] = mister_CMD_SWITCHRES;
-      memcpy(&buffer[1],&px,sizeof(px));
-      memcpy(&buffer[9],&udp_hactive,sizeof(udp_hactive));
-      memcpy(&buffer[11],&udp_hbegin,sizeof(udp_hbegin));
-      memcpy(&buffer[13],&udp_hend,sizeof(udp_hend));
-      memcpy(&buffer[15],&udp_htotal,sizeof(udp_htotal));
-      memcpy(&buffer[17],&udp_vactive,sizeof(udp_vactive));
-      memcpy(&buffer[19],&udp_vbegin,sizeof(udp_vbegin));
-      memcpy(&buffer[21],&udp_vend,sizeof(udp_vend));
-      memcpy(&buffer[23],&udp_vtotal,sizeof(udp_vtotal));
-      memcpy(&buffer[25],&udp_interlace,sizeof(udp_interlace));
-      mister_Send(&buffer[0], 26);
+      mister_video.downscaled = 1;
    }
+*/
+   RARCH_LOG("[MiSTer] Sending CMD_SWITCHRES...\n");
+   buffer[0] = mister_CMD_SWITCHRES;
+   memcpy(&buffer[1],&px,sizeof(px));
+   memcpy(&buffer[9],&udp_hactive,sizeof(udp_hactive));
+   memcpy(&buffer[11],&udp_hbegin,sizeof(udp_hbegin));
+   memcpy(&buffer[13],&udp_hend,sizeof(udp_hend));
+   memcpy(&buffer[15],&udp_htotal,sizeof(udp_htotal));
+   memcpy(&buffer[17],&udp_vactive,sizeof(udp_vactive));
+   memcpy(&buffer[19],&udp_vbegin,sizeof(udp_vbegin));
+   memcpy(&buffer[21],&udp_vend,sizeof(udp_vend));
+   memcpy(&buffer[23],&udp_vtotal,sizeof(udp_vtotal));
+   memcpy(&buffer[25],&udp_interlace,sizeof(udp_interlace));
+   mister_Send(&buffer[0], 26);
+
+   modeline_active = 1;
+   mode_switch_pending = 0;
 }
 
 void mister_CmdBlit(char *bufferFrame, uint16_t vsync)
@@ -276,7 +528,7 @@ void mister_CmdBlit(char *bufferFrame, uint16_t vsync)
 
    uint32_t bufferSize = (mister_video.interlaced == 0) ? mister_video.width * mister_video.height * 3 : mister_video.width * (mister_video.height >> 1) * 3;
 
-   bufferSize += (mister_video.width * mister_video.lines_padding * 3) >>  mister_video.interlaced; //hack when switchres and core resolution not match
+   //bufferSize += (mister_video.width * mister_video.lines_padding * 3) >>  mister_video.interlaced; //hack when switchres and core resolution not match
 
    if (mister_video.lz4_compress == false)
       mister_SendMTU(&bufferFrame[0], bufferSize, 1470);
