@@ -93,13 +93,17 @@ void mister_draw(video_driver_state_t *video_st, const void *data, unsigned widt
          u.u8 = menu_on? (const uint8_t*)texture_frame : (const uint8_t*)data;
 
          int x_start = mister_video.width > width ? (mister_video.width - width) / 2 : 0;
+         int x_crop = mister_video.width < width ? width - mister_video.width : 0;
          int y_start = mister_video.height > height ? (mister_video.height - height) / 2 : 0;
+         int y_crop = mister_video.height < height ? (height - mister_video.height) / (mister_isInterlaced() ? 2 : 1) : 0;
 
-         for (u_int j = field; j < height; j++, u.u8 += pitch)
+         u.u8 += (y_crop / 2) * pitch + (x_crop / 2);
+
+         for (u_int j = field; j < height - y_crop; j++, u.u8 += pitch)
          {
             c = ((j + y_start) * mister_video.width + x_start) * 3;
 
-            for (u_int i = 0; i < width; i++)
+            for (u_int i = 0; i < width - x_crop; i++)
             {
                if (menu_on)
                {
@@ -650,8 +654,9 @@ int mister_GetField(void)
    int field = 0;
    if (mister_video.interlaced)
    {
-      mister_video.frameField = !mister_video.frameField;
-      field = mister_video.frameField;
+      //mister_video.frameField = !mister_video.frameField;
+      //field = mister_video.frameField;
+      field = mister_video.fpga_vga_f1;
    }
 
    return field;
