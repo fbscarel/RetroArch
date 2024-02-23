@@ -37,9 +37,8 @@ void mister_draw(video_driver_state_t *video_st, const void *data, unsigned widt
    {
       menu_on = true;
       width = menu_width;
-      height = menu_height;
+      height = menu_height * (mister_isInterlaced() ? 2 : 1);
       pitch = width * sizeof(uint16_t);
-
    }
 #endif
 
@@ -135,8 +134,7 @@ void mister_draw(video_driver_state_t *video_st, const void *data, unsigned widt
             if (numPix >= totalPixels)
                break;
 
-            //if ((mister_isInterlaced() && height > 288) || mister_isDownscaled())
-            if (mister_isInterlaced())
+            if (((mister_isInterlaced() && height > 288) || mister_isDownscaled()) && !menu_on)
                u.u8 += pitch;
 
             if (mister_is480p() && height < 480) //do scanlines for 31khz
