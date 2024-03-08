@@ -4566,8 +4566,9 @@ static void *gl2_init(const video_info_t *video,
     * driver.recording_data, because recording is
     * not initialized yet.
     */
-   if (  video_gpu_record
+   if ((video_gpu_record
       && recording_st->enable)
+      || settings->bools.video_mister_enable)
    {
       gl->flags |=  GL2_FLAG_PBO_READBACK_ENABLE;
       if (gl2_init_pbo_readback(gl))

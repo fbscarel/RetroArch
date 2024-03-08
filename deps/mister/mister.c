@@ -1,4 +1,10 @@
 #include "mister.h"
+#include "../gfx/common/gl2_common.h"
+#include "../gfx/common/gl3_defines.h"
+
+#define GL_VIEWPORT_HACK 1
+#define MAX_BUFFER_WIDTH 1024
+#define MAX_BUFFER_HEIGHT 768
 
 static mister_video_t mister_video;
 static sr_mode mister_mode;
@@ -7,6 +13,18 @@ static unsigned menu_width = 0;
 static unsigned menu_height = 0;
 static bool modeline_active = 0;
 static bool mode_switch_pending = 0;
+
+uint8_t *mister_buffer = 0;
+uint8_t *hardware_buffer = 0;
+
+union
+{
+   const uint8_t *u8;
+   const uint16_t *u16;
+   const uint32_t *u32;
+} u;
+
+void mister_resize_viewport(video_driver_state_t *video_st);
 
 void mister_set_texture_frame(char *frame, unsigned width, unsigned height)
 {
@@ -18,20 +36,47 @@ void mister_set_texture_frame(char *frame, unsigned width, unsigned height)
 void mister_draw(video_driver_state_t *video_st, const void *data, unsigned width, unsigned height, size_t pitch)
 {
    settings_t *settings  = config_get_ptr();
-   struct retro_system_av_info *av_info   = &video_st->av_info;
-   const struct retro_system_timing *info = (const struct retro_system_timing*)&av_info->timing;
    audio_driver_state_t *audio_st  = audio_state_get_ptr();
-   bool blitMister = false;
+   static const uint8_t* prev_buffer;
+   uint8_t field = mister_GetField();
    bool menu_on = false;
+   bool must_clear_buffer = false;
+   bool is_hw_rendered = (data == RETRO_HW_FRAME_BUFFER_VALID
+                           && video_st->frame_cache_data == RETRO_HW_FRAME_BUFFER_VALID
+                           && video_st->frame_cache_data);
 
-   if (retroarch_get_rotation() & 1)
+
+   // Initialize MiSTer if required
+   if (!mister_video.isConnected)
+      mister_CmdInit(settings->arrays.mister_ip, 32100, settings->bools.mister_lz4, settings->uints.audio_output_sample_rate, 2);
+
+   // Send audio first
+   if (audio_st->output_mister && audio_st->output_mister_samples)
    {
-      unsigned tmp = width;
-      width = height;
-      height = tmp;
+      mister_CmdAudio(audio_st->output_mister_samples_conv_buf, audio_st->output_mister_samples >> 1, 2);
+      audio_st->output_mister_samples = 0;
    }
 
-#ifdef HAVE_MENU
+   // Check if we need to mode switch
+   if (mode_switch_pending)
+   {
+      mister_CmdSwitchres(&mister_mode);
+
+      if (is_hw_rendered)
+      {
+         RARCH_LOG("[MiSTer] hardware rendered: %s\n", video_driver_get_ident());
+         mister_resize_viewport(video_st);
+      }
+
+      video_driver_set_size(mister_mode.width, mister_mode.height);
+      must_clear_buffer = true;
+   }
+
+   if (!modeline_active)
+      return;
+
+   #ifdef HAVE_MENU
+   // Get menu bitmap dimensions
    struct menu_state *menu_st              = menu_state_get_ptr();
    if (menu_st->flags & MENU_ST_FLAG_ALIVE && texture_frame != 0)
    {
@@ -40,222 +85,212 @@ void mister_draw(video_driver_state_t *video_st, const void *data, unsigned widt
       height = menu_height * (mister_isInterlaced() ? 2 : 1);
       pitch = width * sizeof(uint16_t);
    }
-#endif
+   #endif
 
-   if (settings->bools.video_mister_enable && audio_st->output_mister && audio_st->output_mister_samples)
+   // Get RGB buffer if hw rendered
+   if (is_hw_rendered)
    {
-      mister_CmdAudio(audio_st->output_mister_samples_conv_buf, audio_st->output_mister_samples >> 1, 2);
-      audio_st->output_mister_samples = 0;
+      if (video_st->current_video->read_viewport
+            && video_st->current_video->read_viewport(video_st->data, hardware_buffer, false))
+         pitch = mister_video.width * 3;
+
+      else return;
    }
 
-   if (settings->bools.video_mister_enable && video_st->frame_count > 0 && !blitMister)
+   if (pitch == 0)
+      return;
+
+   retro_time_t mister_bt1  = cpu_features_get_time_usec();
+
+   // Get RGB source buffer
+   u.u8 = menu_on? (const uint8_t*)texture_frame : is_hw_rendered? (const uint8_t*)hardware_buffer : (const uint8_t*)data;
+
+   // Clear frame buffer if required
+   if (must_clear_buffer || u.u8 != prev_buffer)
    {
-      if (!mister_video.isConnected)
-         mister_CmdInit(settings->arrays.mister_ip, 32100, settings->bools.mister_lz4, settings->uints.audio_output_sample_rate, 2);
-
-      if (mode_switch_pending)
-         mister_CmdSwitchres(&mister_mode);
-
-      if (!modeline_active)
-         return;
-
-      retro_time_t mister_bt1  = cpu_features_get_time_usec();
-
-      uint32_t totalPixels = height * width;
-      uint32_t numPix = 0;
-
-      if (mister_is480p() && height < 480)
-      {
-         totalPixels = totalPixels << 1;
-      }
-
-      if ((mister_isInterlaced() && height > 288) || (mister_isDownscaled()))
-      {
-         totalPixels = totalPixels >> 1;
-      }
-
-      uint8_t *mister_buffer = (uint8_t*)malloc(1024 * 768 * 3);
-      unsigned c = 0;
-
-      uint8_t field = 0;
-
-      if (!blitMister && mister_buffer && (video_st->frame_cache_data != RETRO_HW_FRAME_BUFFER_VALID || menu_on) && pitch > 0) //software rendered
-      {
-         field = mister_GetField();
-         blitMister = true;
-         union
-         {
-            const uint8_t *u8;
-            const uint16_t *u16;
-            const uint32_t *u32;
-         } u;
-
-         u.u8 = menu_on? (const uint8_t*)texture_frame : (const uint8_t*)data;
-
-         int x_start = mister_video.width > width ? (mister_video.width - width) / 2 : 0;
-         int x_crop = mister_video.width < width ? width - mister_video.width : 0;
-         int y_start = mister_video.height > height ? (mister_video.height - height) / 2 : 0;
-         int y_crop = mister_video.height < height ? (height - mister_video.height) / (mister_isInterlaced() ? 2 : 1) : 0;
-
-         u.u8 += (y_crop / 2) * pitch + (x_crop / 2);
-
-         for (u_int j = field; j < height - y_crop; j++, u.u8 += pitch)
-         {
-            c = ((j + y_start) * mister_video.width + x_start) * 3;
-
-            for (u_int i = 0; i < width - x_crop; i++)
-            {
-               if (menu_on)
-               {
-                  uint16_t pixel = u.u16[i];
-                  mister_buffer[c + 0] = (pixel >>  8); //b
-                  mister_buffer[c + 1] = (pixel >>  4); //g
-                  mister_buffer[c + 2] = (pixel >>  0); //r
-               }
-
-               else if (video_st->pix_fmt == RETRO_PIXEL_FORMAT_RGB565)
-               {
-                  uint16_t pixel = u.u16[i];
-                  uint8_t r  = (pixel >> 11) & 0x1f;
-                  uint8_t g  = (pixel >>  5) & 0x3f;
-                  uint8_t b  = (pixel >>  0) & 0x1f;
-                  mister_buffer[c + 0] = (b << 3) | (b >> 2);
-                  mister_buffer[c + 1] = (g << 2) | (g >> 4);
-                  mister_buffer[c + 2] = (r << 3) | (r >> 2);
-               }
-               else
-               {
-                  uint32_t pixel = u.u32[i];
-                  mister_buffer[c + 0] = (pixel >>  0) & 0xff; //b
-                  mister_buffer[c + 1] = (pixel >>  8) & 0xff; //g
-                  mister_buffer[c + 2] = (pixel >> 16) & 0xff; //r
-               }
-               c += 3;
-               numPix++;
-               if (numPix >= totalPixels)
-                  break;
-            }
-            if (numPix >= totalPixels)
-               break;
-
-            if (((mister_isInterlaced() && height > 288) || mister_isDownscaled()) && !menu_on)
-               u.u8 += pitch;
-
-            if (mister_is480p() && height < 480) //do scanlines for 31khz
-            {
-               for(uint32_t x = 0; x < width; x++)
-               {
-                  mister_buffer[c + 0] = 0x00;
-                  mister_buffer[c + 1] = 0x00;
-                  mister_buffer[c + 2] = 0x00;
-                  c += 3;
-                  numPix++;
-
-                  if (numPix >= totalPixels)
-                     break;
-               }
-               if (numPix >= totalPixels)
-                  break;
-            }
-         }
-      }
-
-      if (!blitMister && mister_buffer && data == RETRO_HW_FRAME_BUFFER_VALID && video_st->frame_cache_data) //hardware rendered
-      {
-         struct video_viewport vp = { 0 };
-         video_driver_get_viewport_info(&vp);
-         uint16_t mister_width = mister_GetWidth();
-         uint16_t mister_height = mister_GetHeight();
-
-         if (vp.width != mister_width || vp.height != mister_height || video_st->frame_count == 1)
-         {
-            vp.x                = 0;
-            vp.y                = 0;
-            vp.width            = mister_width;
-            vp.height           = mister_height;
-            vp.full_width       = mister_width;
-            vp.full_height      = mister_height;
-
-            video_st->aspect_ratio = aspectratio_lut[ASPECT_RATIO_CUSTOM].value;
-            settings->uints.video_aspect_ratio_idx = ASPECT_RATIO_CUSTOM;
-            settings->video_viewport_custom = vp;
-            video_driver_set_aspect_ratio();
-
-            video_driver_update_viewport(&vp, false, true);
-         }
-
-         video_driver_get_viewport_info(&vp);
-         //printf("%d %d %d %d\n",mister_width,mister_height,vp.width,vp.height);
-         uint8_t *bit24_image = (uint8_t*)malloc(vp.width*vp.height*3);
-
-         if (bit24_image && vp.width == mister_width && vp.height == mister_height && video_st->current_video->read_viewport && video_st->current_video->read_viewport(video_st->data, bit24_image, false))
-         {
-            //printf("frame %d size %d width %d %d height %d %d pitch %d\n",video_st->frame_count , vp.width*vp.height*3, width, vp.width, height,vp.height, pitch);
-            field = mister_GetField();
-            blitMister = true;
-            const uint8_t *u8 = (const uint8_t*)bit24_image;
-            u8 += (vp.height * vp.width * 3) - 1;
-
-            for(uint32_t i=field; i<vp.height; i++, u8 -= vp.width*3)
-            {
-               for (uint32_t j=0; j<vp.width;j++)
-               {
-                  uint32_t pix = j * 3;
-                  mister_buffer[c + 0] = u8[pix+1];
-                  mister_buffer[c + 1] = u8[pix+2];
-                  mister_buffer[c + 2] = u8[pix];
-
-                  c+=3;
-                  numPix++;
-                  if (numPix >= totalPixels)
-                     break;
-               }
-               if (numPix >= totalPixels)
-                  break;
-
-               if ((mister_isInterlaced() && vp.height > 288) || mister_isDownscaled())
-                 u8 -= vp.width*3;
-
-               if (mister_is480p() && vp.height < 480) //do scanlines for 31khz
-               {
-                  for(uint32_t x = 0; x < vp.width; x++)
-                  {
-                     mister_buffer[c + 0] = 0x00;
-                     mister_buffer[c + 1] = 0x00;
-                     mister_buffer[c + 2] = 0x00;
-                     c += 3;
-                     numPix++;
-
-                     if (numPix >= totalPixels)
-                         break;
-                  }
-                  if (numPix >= totalPixels)
-                    break;
-               }
-            }
-         }
-         free(bit24_image);
-      }
-
-      if (blitMister)
-      {
-         int mister_vsync = 1;
-         if (settings->bools.video_frame_delay_auto && video_st->frame_delay_effective > 0)
-         {
-            mister_vsync = height / (16 / video_st->frame_delay_effective);
-         }
-         else if (settings->uints.video_frame_delay > 0)
-         {
-            mister_vsync = height / (16 / settings->uints.video_frame_delay);
-         }
-         mister_CmdBlit((char *)&mister_buffer[0], mister_vsync);
-         retro_time_t mister_bt2  = cpu_features_get_time_usec();
-         mister_setBlitTime(mister_bt2 - mister_bt1);
-      }
-
-      free(mister_buffer);
+      must_clear_buffer = false;
+      memset(mister_buffer, 0, MAX_BUFFER_WIDTH * MAX_BUFFER_HEIGHT * 3);
+      prev_buffer = u.u8;
    }
+
+   // Compute borders and clipping
+   u_int rotation = retroarch_get_rotation();
+   u_int rot_width = (rotation & 1) && !menu_on ? height : width;
+   u_int rot_height = (rotation & 1) && !menu_on ?  width : height;
+
+   u_int x_start = mister_video.width > rot_width ? (mister_video.width - rot_width) / 2 : 0;
+   u_int x_crop = mister_video.width < rot_width ? rot_width - mister_video.width : 0;
+   u_int x_max = rot_width - x_crop;
+   u_int y_start = mister_video.height > rot_height ? (mister_video.height - rot_height) / 2 : 0;
+   u_int y_crop = mister_video.height < rot_height ? (rot_height - mister_video.height) : 0;
+   u_int y_max = rot_height - y_crop;
+
+   if (mister_isInterlaced())
+   {
+      y_start /= 2;
+      y_crop /= 2;
+
+      if (!(rotation & 1) || menu_on)
+         y_max /= 2;
+   }
+
+   if ((rotation & 1) && !menu_on)
+   {
+      u_int tmp;
+      tmp = x_max;
+      x_max = y_max;
+      y_max = tmp;
+   }
+
+   // Get first pixel address from our RGB source
+   u.u8 += (field + (y_crop / 2)) * pitch + (x_crop / 2);
+
+   // Compute steps to walk through the source & target bitmaps
+   u_int c = 0;
+   int c_step = 3;
+   int s_step = 1;
+   int r_step = 1;
+
+   if (!menu_on)
+   {
+      if (is_hw_rendered)
+         r_step = mister_isInterlaced() ? 2 : 1;
+
+      else switch (rotation)
+      {
+         case ORIENTATION_NORMAL:
+         case ORIENTATION_FLIPPED:
+            c_step = 3;
+            r_step = mister_isInterlaced() ? 2 : 1;
+            break;
+
+         case ORIENTATION_VERTICAL:
+            c_step = -mister_video.width * 3;
+            s_step = mister_isInterlaced() ? 2 : 1;
+            break;
+
+         case ORIENTATION_FLIPPED_ROTATED:
+            c_step = +mister_video.width * 3;
+            s_step = mister_isInterlaced() ? 2 : 1;
+            break;
+      }
+   }
+
+   // Copy RGB buffer
+   for (u_int j = 0; j < y_max - 1; j++)
+   {
+      if (is_hw_rendered)
+         c = (mister_video.width * (mister_video.height / r_step - y_start - field - j) + x_start) * 3;
+
+      else if (menu_on || !(rotation & 1))
+         c = ((j + y_start) * mister_video.width + x_start) * 3;
+
+      else if (rotation == ORIENTATION_VERTICAL)
+         c = (mister_video.width * (mister_video.height / s_step - y_start - 1) + j + x_start) * 3;
+
+      else if (rotation == ORIENTATION_FLIPPED_ROTATED)
+         c = (mister_video.width * (y_start + 1) - j - x_start - 1) * 3;
+
+      for (u_int i = 0; i < x_max - 1; i += s_step)
+      {
+         if (menu_on)
+         {
+            uint16_t pixel = u.u16[i];
+            mister_buffer[c + 0] = (pixel >>  8); //b
+            mister_buffer[c + 1] = (pixel >>  4); //g
+            mister_buffer[c + 2] = (pixel >>  0); //r
+         }
+         else if (is_hw_rendered)
+         {
+            u_int pixel = i * 3;
+            mister_buffer[c + 0] = u.u8[pixel + 0];
+            mister_buffer[c + 1] = u.u8[pixel + 1];
+            mister_buffer[c + 2] = u.u8[pixel + 2];
+         }
+         else if (video_st->pix_fmt == RETRO_PIXEL_FORMAT_RGB565)
+         {
+            uint16_t pixel = u.u16[i];
+            uint8_t r  = (pixel >> 11) & 0x1f;
+            uint8_t g  = (pixel >>  5) & 0x3f;
+            uint8_t b  = (pixel >>  0) & 0x1f;
+            mister_buffer[c + 0] = (b << 3) | (b >> 2);
+            mister_buffer[c + 1] = (g << 2) | (g >> 4);
+            mister_buffer[c + 2] = (r << 3) | (r >> 2);
+         }
+         else
+         {
+            uint32_t pixel = u.u32[i];
+            mister_buffer[c + 0] = (pixel >>  0) & 0xff; //b
+            mister_buffer[c + 1] = (pixel >>  8) & 0xff; //g
+            mister_buffer[c + 2] = (pixel >> 16) & 0xff; //r
+         }
+
+         c += c_step;
+      }
+
+      u.u8 += pitch * r_step;
+   }
+
+   // Compute sync scanline based on frame delay
+   int mister_vsync = 1;
+   if (settings->bools.video_frame_delay_auto && video_st->frame_delay_effective > 0)
+      mister_vsync = height / (16 / video_st->frame_delay_effective);
+
+   else if (settings->uints.video_frame_delay > 0)
+      mister_vsync = height / (16 / settings->uints.video_frame_delay);
+
+   // Blit to MiSTer
+   mister_CmdBlit((char *)mister_buffer, mister_vsync);
+   retro_time_t mister_bt2  = cpu_features_get_time_usec();
+
+   mister_setBlitTime(mister_bt2 - mister_bt1);
 }
+
+void mister_resize_viewport(video_driver_state_t *video_st)
+{
+#if GL_VIEWPORT_HACK
+   if (string_is_equal(video_driver_get_ident(), "gl"))
+   {
+      gl2_t *gl = (gl2_t*)video_st->data;
+      gl->video_width = mister_mode.width;
+      gl->video_height = mister_mode.height;
+   }
+   else if (string_is_equal(video_driver_get_ident(), "glcore"))
+   {
+      gl3_t *gl = (gl3_t*)video_st->data;
+      gl->video_width = mister_mode.width;
+      gl->video_height = mister_mode.height;
+      gl->vp.width = mister_mode.width;
+      gl->vp.height = mister_mode.height;
+      gl->pbo_readback_scaler.out_width = mister_mode.width;
+      gl->pbo_readback_scaler.out_height = mister_mode.height;
+      gl->pbo_readback_scaler.in_width = mister_mode.width;
+      gl->pbo_readback_scaler.in_height = mister_mode.height;
+      gl->pbo_readback_scaler.in_stride = mister_mode.width * sizeof(uint32_t);
+      gl->pbo_readback_scaler.out_stride = mister_mode.width * 3;
+   }
+#else
+   settings_t *settings  = config_get_ptr();
+   struct video_viewport vp = { 0 };
+   video_driver_get_viewport_info(&vp);
+   uint16_t mister_width = mister_GetWidth();
+   uint16_t mister_height = mister_GetHeight();
+
+   vp.x                = 0;
+   vp.y                = 0;
+   vp.width            = mister_width;
+   vp.height           = mister_height;
+   vp.full_width       = mister_width;
+   vp.full_height      = mister_height;
+
+   video_st->aspect_ratio = aspectratio_lut[ASPECT_RATIO_CUSTOM].value;
+   settings->uints.video_aspect_ratio_idx = ASPECT_RATIO_CUSTOM;
+   settings->video_viewport_custom = vp;
+   video_driver_set_aspect_ratio();
+   video_driver_update_viewport(&vp, false, true);
+#endif
+}
+
 
 
 void mister_CmdClose(void)
@@ -276,6 +311,11 @@ void mister_CmdClose(void)
    close(mister_video.sockfd);
 #endif
    mister_video.isConnected = 0;
+
+   free(mister_buffer);
+   free(hardware_buffer);
+   mister_buffer = 0;
+   hardware_buffer = 0;
 }
 
 void mister_CmdInit(const char* mister_host, short mister_port, bool lz4_frames,uint32_t sound_rate, uint8_t sound_chan)
@@ -391,8 +431,11 @@ void mister_CmdInit(const char* mister_host, short mister_port, bool lz4_frames,
    mister_video.vcountGPU = 0;
    mister_video.interlaced = 0;
    mister_video.fpga_audio = 0;
-
    mister_video.isConnected = true;
+
+   // Allocate buffers
+    mister_buffer = (uint8_t*)malloc(MAX_BUFFER_WIDTH * MAX_BUFFER_HEIGHT * 3);
+    hardware_buffer = (uint8_t*)malloc(MAX_BUFFER_WIDTH * MAX_BUFFER_HEIGHT * 4);
 }
 
 
@@ -479,6 +522,7 @@ void mister_CmdSwitchres(sr_mode *srm)
    }
 */
    RARCH_LOG("[MiSTer] Sending CMD_SWITCHRES...\n");
+
    buffer[0] = mister_CMD_SWITCHRES;
    memcpy(&buffer[1],&px,sizeof(px));
    memcpy(&buffer[9],&udp_hactive,sizeof(udp_hactive));
@@ -654,9 +698,8 @@ int mister_GetField(void)
    int field = 0;
    if (mister_video.interlaced)
    {
-      //mister_video.frameField = !mister_video.frameField;
-      //field = mister_video.frameField;
-      field = mister_video.fpga_vga_f1;
+      field = mister_video.frameField;
+      mister_video.frameField = !mister_video.frameField;
    }
 
    return field;

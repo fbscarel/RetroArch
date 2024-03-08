@@ -2971,8 +2971,9 @@ static void *gl3_init(const video_info_t *video,
             video->is_threaded,
             FONT_DRIVER_RENDER_OPENGL_CORE_API);
 
-   if (video_gpu_record
+   if ((video_gpu_record
       && recording_state_get_ptr()->enable)
+      || settings->bools.video_mister_enable)
    {
       gl->flags |=  GL3_FLAG_PBO_READBACK_ENABLE;
       if (gl3_init_pbo_readback(gl))
