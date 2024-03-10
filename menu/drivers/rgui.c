@@ -6673,8 +6673,10 @@ static void rgui_set_texture_frame(video_driver_state_t *video_st,
          && video_st->poke->set_texture_frame)
       video_st->poke->set_texture_frame(video_st->data,
             frame, rgb32, width, height, alpha);
+#ifdef HAVE_MISTER
    if (config_get_ptr()->bools.video_mister_enable)
-      mister_set_texture_frame((char *)frame, width, height);
+      mister_set_menu_buffer((char *)frame, width, height);
+#endif
 }
 
 static void rgui_set_texture(void *data)

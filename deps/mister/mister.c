@@ -1,6 +1,8 @@
 #include "mister.h"
+#include <gfx/video_frame.h>
 #include "../gfx/common/gl2_common.h"
 #include "../gfx/common/gl3_defines.h"
+#include "../gfx/common/vulkan_common.h"
 
 #define GL_VIEWPORT_HACK 1
 #define MAX_BUFFER_WIDTH 1024
@@ -8,13 +10,16 @@
 
 static mister_video_t mister_video;
 static sr_mode mister_mode;
-static char *texture_frame = 0;
+static char *menu_buffer = 0;
 static unsigned menu_width = 0;
 static unsigned menu_height = 0;
 static bool modeline_active = 0;
 static bool mode_switch_pending = 0;
+static bool prev_menu_state = false;
+struct scaler_ctx *scaler;
 
 uint8_t *mister_buffer = 0;
+uint8_t *scaled_buffer = 0;
 uint8_t *hardware_buffer = 0;
 
 union
@@ -26,9 +31,9 @@ union
 
 void mister_resize_viewport(video_driver_state_t *video_st);
 
-void mister_set_texture_frame(char *frame, unsigned width, unsigned height)
+void mister_set_menu_buffer(char *frame, unsigned width, unsigned height)
 {
-   texture_frame = frame;
+   menu_buffer = frame;
    menu_width = width;
    menu_height = height;
 }
@@ -37,9 +42,10 @@ void mister_draw(video_driver_state_t *video_st, const void *data, unsigned widt
 {
    settings_t *settings  = config_get_ptr();
    audio_driver_state_t *audio_st  = audio_state_get_ptr();
-   static const uint8_t* prev_buffer;
    uint8_t field = mister_GetField();
+   uint8_t format = 0;
    bool menu_on = false;
+   bool stretched = false;
    bool must_clear_buffer = false;
    bool is_hw_rendered = (data == RETRO_HW_FRAME_BUFFER_VALID
                            && video_st->frame_cache_data == RETRO_HW_FRAME_BUFFER_VALID
@@ -75,15 +81,34 @@ void mister_draw(video_driver_state_t *video_st, const void *data, unsigned widt
    if (!modeline_active)
       return;
 
-   #ifdef HAVE_MENU
+   retro_time_t mister_bt1  = cpu_features_get_time_usec();
+
+   // Get pixel format
+   if (video_st->pix_fmt == RETRO_PIXEL_FORMAT_XRGB8888)
+      format = SCALER_FMT_ARGB8888;
+
+   else if (video_st->pix_fmt == RETRO_PIXEL_FORMAT_RGB565)
+      format = SCALER_FMT_RGB565;
+
+   else
+      // Unsupported pixel format
+      return;
+
    // Get menu bitmap dimensions
-   struct menu_state *menu_st              = menu_state_get_ptr();
-   if (menu_st->flags & MENU_ST_FLAG_ALIVE && texture_frame != 0)
+   #ifdef HAVE_MENU
+   if (menu_state_get_ptr()->flags & MENU_ST_FLAG_ALIVE && menu_buffer != 0)
    {
       menu_on = true;
       width = menu_width;
-      height = menu_height * (mister_isInterlaced() ? 2 : 1);
+      height = menu_height;
       pitch = width * sizeof(uint16_t);
+      format = SCALER_FMT_RGBA4444;
+      data = menu_buffer;
+   }
+   if (prev_menu_state != menu_on)
+   {
+      prev_menu_state = menu_on;
+      must_clear_buffer = true;
    }
    #endif
 
@@ -95,22 +120,57 @@ void mister_draw(video_driver_state_t *video_st, const void *data, unsigned widt
          pitch = mister_video.width * 3;
 
       else return;
+
+      format = SCALER_FMT_BGR24;
+      data = hardware_buffer;
    }
 
    if (pitch == 0)
       return;
 
-   retro_time_t mister_bt1  = cpu_features_get_time_usec();
+   // Scale frame
+   double x_scale, y_scale;
+   if (menu_on)
+   {
+      x_scale = (double)mister_mode.width / (double)width;
+      y_scale = (double)mister_mode.height / (double)height;
+      stretched = x_scale != floor(x_scale) || y_scale != floor(y_scale);
+   }
+   else
+   {
+      x_scale = (retroarch_get_rotation() & 1) ? mister_mode.y_scale : mister_mode.x_scale;
+      y_scale = (retroarch_get_rotation() & 1) ? mister_mode.x_scale : mister_mode.y_scale;
+      stretched = mister_mode.is_stretched;
+   }
 
-   // Get RGB source buffer
-   u.u8 = menu_on? (const uint8_t*)texture_frame : is_hw_rendered? (const uint8_t*)hardware_buffer : (const uint8_t*)data;
+   if (x_scale != 1.0 || y_scale != 1.0)
+   {
+      scaler->scaler_type = stretched ? SCALER_TYPE_BILINEAR : SCALER_TYPE_POINT;
+
+      video_frame_scale(
+            scaler,
+            scaled_buffer,
+            data,
+            format,
+            width * x_scale,
+            height * y_scale,
+            width  * x_scale * sizeof(uint32_t),
+            width,
+            height,
+            pitch);
+
+      width *= x_scale;
+      height *= y_scale;
+      pitch = scaler->out_stride;
+      format = scaler->out_fmt;
+      data = scaled_buffer;
+   }
 
    // Clear frame buffer if required
-   if (must_clear_buffer || u.u8 != prev_buffer)
+   if (must_clear_buffer)
    {
       must_clear_buffer = false;
       memset(mister_buffer, 0, MAX_BUFFER_WIDTH * MAX_BUFFER_HEIGHT * 3);
-      prev_buffer = u.u8;
    }
 
    // Compute borders and clipping
@@ -143,6 +203,7 @@ void mister_draw(video_driver_state_t *video_st, const void *data, unsigned widt
    }
 
    // Get first pixel address from our RGB source
+   u.u8 = data;
    u.u8 += (field + (y_crop / 2)) * pitch + (x_crop / 2);
 
    // Compute steps to walk through the source & target bitmaps
@@ -151,29 +212,26 @@ void mister_draw(video_driver_state_t *video_st, const void *data, unsigned widt
    int s_step = 1;
    int r_step = 1;
 
-   if (!menu_on)
+   if (menu_on || is_hw_rendered)
+      r_step = mister_isInterlaced() ? 2 : 1;
+
+   else switch (rotation)
    {
-      if (is_hw_rendered)
+      case ORIENTATION_NORMAL:
+      case ORIENTATION_FLIPPED:
+         c_step = 3;
          r_step = mister_isInterlaced() ? 2 : 1;
+         break;
 
-      else switch (rotation)
-      {
-         case ORIENTATION_NORMAL:
-         case ORIENTATION_FLIPPED:
-            c_step = 3;
-            r_step = mister_isInterlaced() ? 2 : 1;
-            break;
+      case ORIENTATION_VERTICAL:
+         c_step = -mister_video.width * 3;
+         s_step = mister_isInterlaced() ? 2 : 1;
+         break;
 
-         case ORIENTATION_VERTICAL:
-            c_step = -mister_video.width * 3;
-            s_step = mister_isInterlaced() ? 2 : 1;
-            break;
-
-         case ORIENTATION_FLIPPED_ROTATED:
-            c_step = +mister_video.width * 3;
-            s_step = mister_isInterlaced() ? 2 : 1;
-            break;
-      }
+      case ORIENTATION_FLIPPED_ROTATED:
+         c_step = +mister_video.width * 3;
+         s_step = mister_isInterlaced() ? 2 : 1;
+         break;
    }
 
    // Copy RGB buffer
@@ -193,31 +251,31 @@ void mister_draw(video_driver_state_t *video_st, const void *data, unsigned widt
 
       for (u_int i = 0; i < x_max - 1; i += s_step)
       {
-         if (menu_on)
+         if (format == SCALER_FMT_RGBA4444)
          {
             uint16_t pixel = u.u16[i];
             mister_buffer[c + 0] = (pixel >>  8); //b
             mister_buffer[c + 1] = (pixel >>  4); //g
             mister_buffer[c + 2] = (pixel >>  0); //r
          }
-         else if (is_hw_rendered)
+         else if (format == SCALER_FMT_BGR24)
          {
             u_int pixel = i * 3;
-            mister_buffer[c + 0] = u.u8[pixel + 0];
-            mister_buffer[c + 1] = u.u8[pixel + 1];
-            mister_buffer[c + 2] = u.u8[pixel + 2];
+            mister_buffer[c + 0] = u.u8[pixel + 0]; //b
+            mister_buffer[c + 1] = u.u8[pixel + 1]; //g
+            mister_buffer[c + 2] = u.u8[pixel + 2]; //r
          }
-         else if (video_st->pix_fmt == RETRO_PIXEL_FORMAT_RGB565)
+         else if (format == SCALER_FMT_RGB565)
          {
             uint16_t pixel = u.u16[i];
             uint8_t r  = (pixel >> 11) & 0x1f;
             uint8_t g  = (pixel >>  5) & 0x3f;
             uint8_t b  = (pixel >>  0) & 0x1f;
-            mister_buffer[c + 0] = (b << 3) | (b >> 2);
-            mister_buffer[c + 1] = (g << 2) | (g >> 4);
-            mister_buffer[c + 2] = (r << 3) | (r >> 2);
+            mister_buffer[c + 0] = (b << 3) | (b >> 2); //b
+            mister_buffer[c + 1] = (g << 2) | (g >> 4); //g
+            mister_buffer[c + 2] = (r << 3) | (r >> 2); //r
          }
-         else
+         else if (format == SCALER_FMT_ARGB8888)
          {
             uint32_t pixel = u.u32[i];
             mister_buffer[c + 0] = (pixel >>  0) & 0xff; //b
@@ -269,6 +327,33 @@ void mister_resize_viewport(video_driver_state_t *video_st)
       gl->pbo_readback_scaler.in_stride = mister_mode.width * sizeof(uint32_t);
       gl->pbo_readback_scaler.out_stride = mister_mode.width * 3;
    }
+   else if (string_is_equal(video_driver_get_ident(), "vulkan"))
+   {
+      vk_t *vk = (vk_t*)video_st->data;
+      vk->video_width = mister_mode.width;
+      vk->video_height = mister_mode.height;
+      vk->vp.width = mister_mode.width;
+      vk->vp.height = mister_mode.height;
+      vk->readback.scaler_bgr.in_width    = mister_mode.width;
+      vk->readback.scaler_bgr.in_height   = mister_mode.height;
+      vk->readback.scaler_bgr.out_width   = mister_mode.width;
+      vk->readback.scaler_bgr.out_height  = mister_mode.height;
+      vk->readback.scaler_bgr.in_stride   = mister_mode.width * sizeof(uint32_t);
+      vk->readback.scaler_bgr.out_stride  = mister_mode.width * 3;
+      vk->readback.scaler_bgr.in_fmt      = SCALER_FMT_ARGB8888;
+      vk->readback.scaler_bgr.out_fmt     = SCALER_FMT_BGR24;
+      vk->readback.scaler_bgr.scaler_type = SCALER_TYPE_POINT;
+
+      vk->readback.scaler_rgb.in_width    = mister_mode.width;
+      vk->readback.scaler_rgb.in_height   = mister_mode.height;
+      vk->readback.scaler_rgb.out_width   = mister_mode.width;
+      vk->readback.scaler_rgb.out_height  = mister_mode.height;
+      vk->readback.scaler_rgb.in_stride   = mister_mode.width * sizeof(uint32_t);
+      vk->readback.scaler_rgb.out_stride  = mister_mode.width * 3;
+      vk->readback.scaler_rgb.in_fmt      = SCALER_FMT_ABGR8888;
+      vk->readback.scaler_rgb.out_fmt     = SCALER_FMT_BGR24;
+      vk->readback.scaler_rgb.scaler_type = SCALER_TYPE_POINT;
+   }
 #else
    settings_t *settings  = config_get_ptr();
    struct video_viewport vp = { 0 };
@@ -313,8 +398,10 @@ void mister_CmdClose(void)
    mister_video.isConnected = 0;
 
    free(mister_buffer);
+   free(scaled_buffer);
    free(hardware_buffer);
    mister_buffer = 0;
+   scaled_buffer = 0;
    hardware_buffer = 0;
 }
 
@@ -435,7 +522,10 @@ void mister_CmdInit(const char* mister_host, short mister_port, bool lz4_frames,
 
    // Allocate buffers
     mister_buffer = (uint8_t*)malloc(MAX_BUFFER_WIDTH * MAX_BUFFER_HEIGHT * 3);
+    scaled_buffer = (uint8_t*)malloc(MAX_BUFFER_WIDTH * MAX_BUFFER_HEIGHT * 4);
     hardware_buffer = (uint8_t*)malloc(MAX_BUFFER_WIDTH * MAX_BUFFER_HEIGHT * 4);
+
+    scaler = (struct scaler_ctx*)calloc(1, sizeof(*scaler));
 }
 
 

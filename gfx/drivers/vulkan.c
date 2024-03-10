@@ -3493,7 +3493,7 @@ static void vulkan_init_readback(vk_t *vk, bool video_gpu_record)
     */
    recording_state_t *rec_st = recording_state_get_ptr();
 
-   if (!(video_gpu_record && rec_st->enable))
+   if (!(video_gpu_record && rec_st->enable) && !settings->bools.video_mister_enable)
    {
       vk->flags                       &= ~VK_FLAG_READBACK_STREAMED;
       return;
