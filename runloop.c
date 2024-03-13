@@ -4113,6 +4113,10 @@ void runloop_event_deinit_core(void)
    uninit_libretro_symbols(&runloop_st->current_core);
    runloop_st->current_core.flags &= ~RETRO_CORE_FLAG_SYMBOLS_INITED;
 
+#if defined HAVE_MISTER //psakhis
+   mister_CmdClose(); //psakhis
+#endif
+
    /* Restore original refresh rate, if it has been changed
     * automatically in SET_SYSTEM_AV_INFO */
    if (video_st->video_refresh_rate_original)

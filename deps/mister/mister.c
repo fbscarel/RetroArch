@@ -15,7 +15,8 @@ static unsigned menu_width = 0;
 static unsigned menu_height = 0;
 static bool modeline_active = 0;
 static bool mode_switch_pending = 0;
-static bool prev_menu_state = false;
+static bool vp_resize_pending = 0;
+static bool prev_menu_state = 0;
 struct scaler_ctx *scaler;
 
 uint8_t *mister_buffer = 0;
@@ -42,14 +43,13 @@ void mister_draw(video_driver_state_t *video_st, const void *data, unsigned widt
 {
    settings_t *settings  = config_get_ptr();
    audio_driver_state_t *audio_st  = audio_state_get_ptr();
-   uint8_t field = mister_GetField();
+   uint8_t field = 0;
    uint8_t format = 0;
    bool menu_on = false;
    bool stretched = false;
    bool must_clear_buffer = false;
    bool is_hw_rendered = (data == RETRO_HW_FRAME_BUFFER_VALID
-                           && video_st->frame_cache_data == RETRO_HW_FRAME_BUFFER_VALID
-                           && video_st->frame_cache_data);
+                           && video_st->frame_cache_data == RETRO_HW_FRAME_BUFFER_VALID);
 
 
    // Initialize MiSTer if required
@@ -68,13 +68,8 @@ void mister_draw(video_driver_state_t *video_st, const void *data, unsigned widt
    {
       mister_CmdSwitchres(&mister_mode);
 
-      if (is_hw_rendered)
-      {
-         RARCH_LOG("[MiSTer] hardware rendered: %s\n", video_driver_get_ident());
-         mister_resize_viewport(video_st);
-      }
-
       video_driver_set_size(mister_mode.width, mister_mode.height);
+      vp_resize_pending = true;
       must_clear_buffer = true;
    }
 
@@ -115,6 +110,12 @@ void mister_draw(video_driver_state_t *video_st, const void *data, unsigned widt
    // Get RGB buffer if hw rendered
    if (is_hw_rendered)
    {
+      if (vp_resize_pending)
+      {
+         mister_resize_viewport(video_st);
+         vp_resize_pending = false;
+      }
+
       if (video_st->current_video->read_viewport
             && video_st->current_video->read_viewport(video_st->data, hardware_buffer, false))
          pitch = mister_video.width * 3;
@@ -145,23 +146,35 @@ void mister_draw(video_driver_state_t *video_st, const void *data, unsigned widt
 
    if (x_scale != 1.0 || y_scale != 1.0)
    {
-      scaler->scaler_type = stretched ? SCALER_TYPE_BILINEAR : SCALER_TYPE_POINT;
+      u_int scaler_width  = round(width * x_scale);
+      u_int scaler_height = round(height * y_scale);
+      u_int scaler_pitch  = scaler_width * sizeof(uint32_t);
 
-      video_frame_scale(
-            scaler,
-            scaled_buffer,
-            data,
-            format,
-            width * x_scale,
-            height * y_scale,
-            width  * x_scale * sizeof(uint32_t),
-            width,
-            height,
-            pitch);
+      if (  width  != (u_int)scaler->in_width
+         || height != (u_int)scaler->in_height
+         || format != scaler->in_fmt
+         || pitch  != (u_int)scaler->in_stride
+         || scaler_width  != (u_int)scaler->out_width
+         || scaler_height != (u_int)scaler->out_height)
+      {
+         scaler->scaler_type = stretched ? SCALER_TYPE_BILINEAR : SCALER_TYPE_POINT;
+         scaler->in_fmt    = format;
+         scaler->in_width  = width;
+         scaler->in_height = height;
+         scaler->in_stride = pitch;
 
-      width *= x_scale;
-      height *= y_scale;
-      pitch = scaler->out_stride;
+         scaler->out_width  = scaler_width;
+         scaler->out_height = scaler_height;
+         scaler->out_stride = scaler_pitch;
+
+         scaler_ctx_gen_filter(scaler);
+      }
+
+      scaler_ctx_scale_direct(scaler, scaled_buffer, data);
+
+      width  = scaler->out_width;
+      height = scaler->out_height;
+      pitch  = scaler->out_stride;
       format = scaler->out_fmt;
       data = scaled_buffer;
    }
@@ -203,6 +216,7 @@ void mister_draw(video_driver_state_t *video_st, const void *data, unsigned widt
    }
 
    // Get first pixel address from our RGB source
+   field = mister_GetField();
    u.u8 = data;
    u.u8 += (field + (y_crop / 2)) * pitch + (x_crop / 2);
 
@@ -312,6 +326,14 @@ void mister_resize_viewport(video_driver_state_t *video_st)
       gl2_t *gl = (gl2_t*)video_st->data;
       gl->video_width = mister_mode.width;
       gl->video_height = mister_mode.height;
+      gl->vp.width = mister_mode.width;
+      gl->vp.height = mister_mode.height;
+      gl->pbo_readback_scaler.out_width = mister_mode.width;
+      gl->pbo_readback_scaler.out_height = mister_mode.height;
+      gl->pbo_readback_scaler.in_width = mister_mode.width;
+      gl->pbo_readback_scaler.in_height = mister_mode.height;
+      gl->pbo_readback_scaler.in_stride = mister_mode.width * sizeof(uint32_t);
+      gl->pbo_readback_scaler.out_stride = mister_mode.width * 3;
    }
    else if (string_is_equal(video_driver_get_ident(), "glcore"))
    {
@@ -396,6 +418,7 @@ void mister_CmdClose(void)
    close(mister_video.sockfd);
 #endif
    mister_video.isConnected = 0;
+   modeline_active = 0;
 
    free(mister_buffer);
    free(scaled_buffer);
@@ -403,6 +426,10 @@ void mister_CmdClose(void)
    mister_buffer = 0;
    scaled_buffer = 0;
    hardware_buffer = 0;
+
+   scaler_ctx_gen_reset(scaler);
+   free(scaler);
+   scaler = 0;
 }
 
 void mister_CmdInit(const char* mister_host, short mister_port, bool lz4_frames,uint32_t sound_rate, uint8_t sound_chan)
@@ -788,8 +815,8 @@ int mister_GetField(void)
    int field = 0;
    if (mister_video.interlaced)
    {
-      field = mister_video.frameField;
       mister_video.frameField = !mister_video.frameField;
+      field = mister_video.frameField;
    }
 
    return field;
