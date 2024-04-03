@@ -30,7 +30,7 @@ union
    const uint32_t *u32;
 } u;
 
-void mister_resize_viewport(video_driver_state_t *video_st);
+void mister_resize_viewport(video_driver_state_t *video_st, unsigned width, unsigned height);
 
 void mister_set_menu_buffer(char *frame, unsigned width, unsigned height)
 {
@@ -51,7 +51,6 @@ void mister_draw(video_driver_state_t *video_st, const void *data, unsigned widt
    bool is_hw_rendered = (data == RETRO_HW_FRAME_BUFFER_VALID
                            && video_st->frame_cache_data == RETRO_HW_FRAME_BUFFER_VALID);
 
-
    // Initialize MiSTer if required
    if (!mister_video.isConnected)
       mister_CmdInit(settings->arrays.mister_ip, 32100, settings->bools.mister_lz4, settings->uints.audio_output_sample_rate, 2);
@@ -68,7 +67,7 @@ void mister_draw(video_driver_state_t *video_st, const void *data, unsigned widt
    {
       mister_CmdSwitchres(&mister_mode);
 
-      video_driver_set_size(mister_mode.width, mister_mode.height);
+      //video_driver_set_size(mister_mode.width, mister_mode.height);
       vp_resize_pending = true;
       must_clear_buffer = true;
    }
@@ -107,15 +106,25 @@ void mister_draw(video_driver_state_t *video_st, const void *data, unsigned widt
    }
    #endif
 
+   // Ignore bogus frames
+   if (data == 0 || width <= 64 || height <= 64)
+      return;
+
+   if (vp_resize_pending)
+   {
+      mister_resize_viewport(video_st, width, height);
+      vp_resize_pending = false;
+   }
+
    // Get RGB buffer if hw rendered
    if (is_hw_rendered)
    {
-      if (vp_resize_pending)
+/*      if (vp_resize_pending)
       {
-         mister_resize_viewport(video_st);
+         mister_resize_viewport(video_st, width, height);
          vp_resize_pending = false;
       }
-
+*/
       if (video_st->current_video->read_viewport
             && video_st->current_video->read_viewport(video_st->data, hardware_buffer, false))
          pitch = mister_video.width * 3;
@@ -318,60 +327,67 @@ void mister_draw(video_driver_state_t *video_st, const void *data, unsigned widt
    mister_setBlitTime(mister_bt2 - mister_bt1);
 }
 
-void mister_resize_viewport(video_driver_state_t *video_st)
+void mister_resize_viewport(video_driver_state_t *video_st, unsigned width, unsigned height)
 {
+/*
+struct video_viewport vp = { 0 };
+video_driver_get_viewport_info(&vp);
+RARCH_LOG("vp_resize %d %d -> %d %d\n", vp.width, vp.height, width, height);
+RARCH_LOG("core aspect %f\n", video_st->aspect_ratio);
+*/
+
 #if GL_VIEWPORT_HACK
    if (string_is_equal(video_driver_get_ident(), "gl"))
    {
       gl2_t *gl = (gl2_t*)video_st->data;
-      gl->video_width = mister_mode.width;
-      gl->video_height = mister_mode.height;
-      gl->vp.width = mister_mode.width;
-      gl->vp.height = mister_mode.height;
-      gl->pbo_readback_scaler.out_width = mister_mode.width;
-      gl->pbo_readback_scaler.out_height = mister_mode.height;
-      gl->pbo_readback_scaler.in_width = mister_mode.width;
-      gl->pbo_readback_scaler.in_height = mister_mode.height;
-      gl->pbo_readback_scaler.in_stride = mister_mode.width * sizeof(uint32_t);
-      gl->pbo_readback_scaler.out_stride = mister_mode.width * 3;
+      gl->video_width = width;
+      gl->video_height = height;
+      gl->vp.width = width;
+      gl->vp.height = height;
+      gl->pbo_readback_scaler.out_width = width;
+      gl->pbo_readback_scaler.out_height = height;
+      gl->pbo_readback_scaler.in_width = width;
+      gl->pbo_readback_scaler.in_height = height;
+      gl->pbo_readback_scaler.in_stride = width * sizeof(uint32_t);
+      gl->pbo_readback_scaler.out_stride = width * 3;
    }
    else if (string_is_equal(video_driver_get_ident(), "glcore"))
    {
       gl3_t *gl = (gl3_t*)video_st->data;
-      gl->video_width = mister_mode.width;
-      gl->video_height = mister_mode.height;
-      gl->vp.width = mister_mode.width;
-      gl->vp.height = mister_mode.height;
-      gl->pbo_readback_scaler.out_width = mister_mode.width;
-      gl->pbo_readback_scaler.out_height = mister_mode.height;
-      gl->pbo_readback_scaler.in_width = mister_mode.width;
-      gl->pbo_readback_scaler.in_height = mister_mode.height;
-      gl->pbo_readback_scaler.in_stride = mister_mode.width * sizeof(uint32_t);
-      gl->pbo_readback_scaler.out_stride = mister_mode.width * 3;
+      gl->video_width = width;
+      gl->video_height = height;
+      gl->vp.width = width;
+      gl->vp.height = height;
+      gl->pbo_readback_scaler.out_width = width;
+      gl->pbo_readback_scaler.out_height = height;
+      gl->pbo_readback_scaler.in_width = width;
+      gl->pbo_readback_scaler.in_height = height;
+      gl->pbo_readback_scaler.in_stride = width * sizeof(uint32_t);
+      gl->pbo_readback_scaler.out_stride = width * 3;
    }
    else if (string_is_equal(video_driver_get_ident(), "vulkan"))
    {
       vk_t *vk = (vk_t*)video_st->data;
-      vk->video_width = mister_mode.width;
-      vk->video_height = mister_mode.height;
-      vk->vp.width = mister_mode.width;
-      vk->vp.height = mister_mode.height;
-      vk->readback.scaler_bgr.in_width    = mister_mode.width;
-      vk->readback.scaler_bgr.in_height   = mister_mode.height;
-      vk->readback.scaler_bgr.out_width   = mister_mode.width;
-      vk->readback.scaler_bgr.out_height  = mister_mode.height;
-      vk->readback.scaler_bgr.in_stride   = mister_mode.width * sizeof(uint32_t);
-      vk->readback.scaler_bgr.out_stride  = mister_mode.width * 3;
+      vk->video_width = width;
+      vk->video_height = height;
+      vk->vp.width = width;
+      vk->vp.height = height;
+      vk->readback.scaler_bgr.in_width    = width;
+      vk->readback.scaler_bgr.in_height   = height;
+      vk->readback.scaler_bgr.out_width   = width;
+      vk->readback.scaler_bgr.out_height  = height;
+      vk->readback.scaler_bgr.in_stride   = width * sizeof(uint32_t);
+      vk->readback.scaler_bgr.out_stride  = width * 3;
       vk->readback.scaler_bgr.in_fmt      = SCALER_FMT_ARGB8888;
       vk->readback.scaler_bgr.out_fmt     = SCALER_FMT_BGR24;
       vk->readback.scaler_bgr.scaler_type = SCALER_TYPE_POINT;
 
-      vk->readback.scaler_rgb.in_width    = mister_mode.width;
-      vk->readback.scaler_rgb.in_height   = mister_mode.height;
-      vk->readback.scaler_rgb.out_width   = mister_mode.width;
-      vk->readback.scaler_rgb.out_height  = mister_mode.height;
-      vk->readback.scaler_rgb.in_stride   = mister_mode.width * sizeof(uint32_t);
-      vk->readback.scaler_rgb.out_stride  = mister_mode.width * 3;
+      vk->readback.scaler_rgb.in_width    = width;
+      vk->readback.scaler_rgb.in_height   = height;
+      vk->readback.scaler_rgb.out_width   = width;
+      vk->readback.scaler_rgb.out_height  = height;
+      vk->readback.scaler_rgb.in_stride   = width * sizeof(uint32_t);
+      vk->readback.scaler_rgb.out_stride  = width * 3;
       vk->readback.scaler_rgb.in_fmt      = SCALER_FMT_ABGR8888;
       vk->readback.scaler_rgb.out_fmt     = SCALER_FMT_BGR24;
       vk->readback.scaler_rgb.scaler_type = SCALER_TYPE_POINT;
@@ -558,12 +574,23 @@ void mister_CmdInit(const char* mister_host, short mister_port, bool lz4_frames,
 
 void mister_set_mode(sr_mode *srm)
 {
-   // Check if mode is the same as previous
-   if (memcmp(&mister_mode, srm, sizeof(sr_mode)) == 0)
+   // Filter out too small modes (hack: these shouldn't reach here)
+   if (srm->width < 200 || srm->height < 160)
       return;
+
+   // Check if mode is the same as previous
+   //if (memcmp(&mister_mode, srm, sizeof(sr_mode)) == 0)
+   //   return;
 
    // otherwise store it
    memcpy(&mister_mode, srm, sizeof(sr_mode));
+/*
+   // Signal viewport resize pending
+   vp_resize_pending = true;
+   RARCH_LOG("vp_resize_pending\n");
+
+   mister_resize_viewport(video_state_get_ptr());
+*/
 
    // Signal mode switch pending
    mode_switch_pending = 1;
@@ -571,33 +598,6 @@ void mister_set_mode(sr_mode *srm)
 
 void mister_CmdSwitchres(sr_mode *srm)
 {
-/*
-   if (!mister_video.isConnected)
-      return;
-
-   if (w < 200 || h < 160)
-      return;
-
-   if (w == mister_video.width_core && h == mister_video.height_core && vfreq == mister_video.vfreq_core)
-      return;
-
-   unsigned char retSR;
-   sr_mode swres_result;
-   int sr_mode_flags = 0;
-
-   if (h > 288)
-      sr_mode_flags = SR_MODE_INTERLACED;
-
-   if (orientation)
-      sr_mode_flags = sr_mode_flags | SR_MODE_ROTATED;
-
-   RARCH_LOG("[MiSTer] Video_SetSwitchres - (in %dx%d@%f)\n", w, h, vfreq);
-
-   if (h < 288 && !mister_is15()) h = h << 1; //fix width
-   if (h > 288 && h <= 400 && mister_is15()) h = 480; //fix height dosbox-pure
-
-   retSR = sr_add_mode(w, h, vfreq, sr_mode_flags, &swres_result);
-*/
    if (srm == 0)
       return;
 
@@ -632,12 +632,7 @@ void mister_CmdSwitchres(sr_mode *srm)
       mister_video.frameField = 0;
       mister_video.frameTime = mister_video.frameTime >> 1;
    }
-/*
-   if (h > mister_video.height)
-   {
-      mister_video.downscaled = 1;
-   }
-*/
+
    RARCH_LOG("[MiSTer] Sending CMD_SWITCHRES...\n");
 
    buffer[0] = mister_CMD_SWITCHRES;

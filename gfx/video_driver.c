@@ -4397,10 +4397,50 @@ void video_driver_frame(const void *data, unsigned width,
    {
       video_info.current_subframe = 0;
 
-#ifdef HAVE_MISTER //psakhis
-      if (config_get_ptr()->bools.video_mister_enable)
-         mister_draw(video_st, data, width, height, pitch);
+#if defined(HAVE_CRTSWITCHRES)
+      /* trigger set resolution*/
+      if (video_info.crt_switch_resolution)
+      {
+         unsigned native_width     = width;
+         bool dynamic_super_width  = false;
+
+         video_st->flags          |= VIDEO_FLAG_CRT_SWITCHING_ACTIVE;
+
+         switch (video_info.crt_switch_resolution_super)
+         {
+            case 2560:
+            case 3840:
+            case 1920:
+               width               = video_info.crt_switch_resolution_super;
+               break;
+            case 1:
+               dynamic_super_width = true;
+               break;
+            default:
+               break;
+         }
+
+         crt_switch_res_core(
+               &video_st->crt_switch_st,
+               native_width, width,
+               height,
+               video_st->core_hz,
+               retroarch_get_rotation() & 1,
+               video_info.crt_switch_resolution,
+               video_info.crt_switch_center_adjust,
+               video_info.crt_switch_porch_adjust,
+               video_info.monitor_index,
+               dynamic_super_width,
+               video_info.crt_switch_resolution_super,
+               video_info.crt_switch_hires_menu);
+      }
+      else if (!video_info.crt_switch_resolution)
 #endif
+         video_st->flags          &= ~VIDEO_FLAG_CRT_SWITCHING_ACTIVE;
+
+
+      video_info.width = width;
+      video_info.height = height;
 
       if (video_st->current_video->frame(
                video_st->data, data, width, height,
@@ -4420,6 +4460,11 @@ void video_driver_frame(const void *data, unsigned width,
    }
 
    video_st->frame_count++;
+
+#ifdef HAVE_MISTER //psakhis
+      if (config_get_ptr()->bools.video_mister_enable)
+         mister_draw(video_st, data, width, height, pitch);
+#endif
 
    /* Display the status text, with a higher priority. */
    if (  (   video_info.fps_show
@@ -4448,49 +4493,6 @@ void video_driver_frame(const void *data, unsigned width,
                MESSAGE_QUEUE_ICON_DEFAULT, MESSAGE_QUEUE_CATEGORY_INFO);
       }
    }
-
-#if defined(HAVE_CRTSWITCHRES)
-   /* trigger set resolution*/
-   if (video_info.crt_switch_resolution)
-   {
-      unsigned native_width     = width;
-      bool dynamic_super_width  = false;
-
-      video_st->flags          |= VIDEO_FLAG_CRT_SWITCHING_ACTIVE;
-
-      switch (video_info.crt_switch_resolution_super)
-      {
-         case 2560:
-         case 3840:
-         case 1920:
-            width               = video_info.crt_switch_resolution_super;
-            break;
-         case 1:
-            dynamic_super_width = true;
-            break;
-         default:
-            break;
-      }
-
-      crt_switch_res_core(
-            &video_st->crt_switch_st,
-            native_width, width,
-            height,
-            video_st->core_hz,
-            retroarch_get_rotation() & 1,
-            video_info.crt_switch_resolution,
-            video_info.crt_switch_center_adjust,
-            video_info.crt_switch_porch_adjust,
-            video_info.monitor_index,
-            dynamic_super_width,
-            video_info.crt_switch_resolution_super,
-            video_info.crt_switch_hires_menu,
-            config_get_ptr()->uints.video_aspect_ratio_idx,
-            video_info.crt_switch_vert_adjust);
-   }
-   else if (!video_info.crt_switch_resolution)
-#endif
-      video_st->flags          &= ~VIDEO_FLAG_CRT_SWITCHING_ACTIVE;
 }
 
 #ifdef HAVE_MISTER //psakhis
