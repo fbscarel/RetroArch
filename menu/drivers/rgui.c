@@ -64,6 +64,10 @@
 #include "../../audio/audio_driver.h"
 #endif
 
+#ifdef HAVE_MISTER
+#include "gfx/gfx_mister.h"
+#endif
+
 #if defined(GEKKO)
 /* Required for the Wii build, since we have
  * to query the hardware for the actual display

@@ -56,6 +56,9 @@
 
 #ifdef HAVE_MICROPHONE
 #include "microphone_driver.h"
+
+#ifdef HAVE_MISTER
+#include "gfx/gfx_mister.h"
 #endif
 
 #include "../configuration.h"
@@ -619,8 +622,12 @@ static void audio_driver_flush(audio_driver_state_t *audio_st,
 
 #ifdef HAVE_MISTER //psakhis
       settings_t *settings   = config_get_ptr();
-      if (settings->bools.video_mister_enable && audio_st->output_mister_samples_conv_buf[0])
+      if (settings->bools.video_mister_enable && mister_is_connected())
       {
+         // flush buffer if needed
+         if (audio_st->output_mister_samples + output_frames > AUDIO_BUFFER_FREE_SAMPLES_COUNT)
+            mister_audio();
+
          memcpy(&audio_st->output_mister_samples_conv_buf[audio_st->output_mister_samples], output_data, output_frames << 1);
          audio_st->output_mister_samples += output_frames;
       }

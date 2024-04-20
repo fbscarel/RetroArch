@@ -149,6 +149,10 @@
 #include "cheevos/cheevos_menu.h"
 #endif
 
+#ifdef HAVE_MISTER
+#include "gfx/gfx_mister.h"
+#endif
+
 #ifdef HAVE_TRANSLATE
 #include <encodings/base64.h>
 #include <formats/rbmp.h>
@@ -1901,7 +1905,7 @@ static void retroarch_deinit_drivers(struct retro_callbacks *cbs)
 #endif
 
 #if defined HAVE_MISTER //psakhis
-   mister_CmdClose(); //psakhis
+   mister_close(); //psakhis
 #endif
 
 #if defined(HAVE_CRTSWITCHRES)

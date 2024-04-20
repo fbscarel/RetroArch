@@ -2573,7 +2573,10 @@ ifeq ($(HAVE_MISTER), 1)
    INCLUDE_DIRS += -I$(DEPS_DIR)/mister
    INCLUDE_DIRS += -I$(DEPS_DIR)/lz4
    OBJ += $(DEPS_DIR)/lz4/lz4.o \
-          $(DEPS_DIR)/mister/mister.o
+          $(DEPS_DIR)/lz4/lz4hc.o \
+          $(DEPS_DIR)/mister/groovymister.o \
+          $(DEPS_DIR)/mister/groovymister_wrapper.o \
+          gfx/gfx_mister.o
 endif
 
 ifeq ($(HAVE_COMPRESSION), 1)
