@@ -16,7 +16,7 @@
 #define MAX_BUFFER_WIDTH 720 //1024
 #define MAX_BUFFER_HEIGHT 576 //768
 
-#define INTERLACED_FB 0
+#define INTERLACED_FB 1
 
 typedef struct mister_video_info
 {
@@ -346,18 +346,16 @@ void mister_draw(video_driver_state_t *video_st, const void *data, unsigned widt
    else if (settings->uints.video_frame_delay > 0)
       mister_vsync = height / (16 / settings->uints.video_frame_delay);
 
-   // Blit to MiSTer
    mister_video.frame++;
-   gmw_blit(mister_video.frame, mister_vsync, 0);
-
-   // Wait v-sync
-   gmw_waitSync();
 
    // Resync if required
    gmw_getStatus(&status);
 
    if (status.frame > mister_video.frame)
-      mister_video.frame = status.frame;
+      mister_video.frame = status.frame + 1;
+
+   // Blit to MiSTer
+   gmw_blit(mister_video.frame, mister_vsync, 0);
 }
 
 
@@ -388,7 +386,7 @@ static void mister_init(const char* mister_host, uint8_t compression, uint32_t s
 }
 
 
-void mister_audio()
+void mister_audio(void)
 {
    audio_driver_state_t *audio_st  = audio_state_get_ptr();
 
@@ -398,6 +396,16 @@ void mister_audio()
 
    if (status.audio)
       gmw_audio(audio_bytes);
+}
+
+void mister_sync(void)
+{
+   gmw_waitSync();
+}
+
+int mister_diff_time_raster(void)
+{
+   return gmw_diffTimeRaster();
 }
 
 void mister_close(void)

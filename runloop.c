@@ -7494,6 +7494,12 @@ end:
 #endif
               || (runloop_st->flags & RUNLOOP_FLAG_PAUSED)))
    {
+
+#ifdef HAVE_MISTER
+   if (settings->bools.video_mister_enable)
+      runloop_st->frame_limit_last_time += mister_diff_time_raster() / 10;
+#endif
+
       const retro_time_t end_frame_time  = cpu_features_get_time_usec();
       const retro_time_t to_sleep_ms     = (
             (  runloop_st->frame_limit_last_time
@@ -7526,6 +7532,11 @@ end:
    if (     !(input_st->flags & INP_FLAG_NONBLOCKING)
          || (runloop_st->flags & RUNLOOP_FLAG_FASTMOTION))
       video_frame_delay(video_st, settings);
+
+#ifdef HAVE_MISTER
+   if (settings->bools.video_mister_enable && !vrr_runloop_enable && audio_sync)
+      mister_sync();
+#endif
 
    /* Set paused state after x frames */
    if (runloop_st->run_frames_and_pause > 0)
