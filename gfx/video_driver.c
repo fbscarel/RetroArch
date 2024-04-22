@@ -4406,6 +4406,10 @@ void video_driver_frame(const void *data, unsigned width,
 
          video_st->flags          |= VIDEO_FLAG_CRT_SWITCHING_ACTIVE;
 
+         // MiSTer doesn't support super resolutions
+         if (config_get_ptr()->bools.video_mister_enable && video_info.crt_switch_resolution_super)
+            video_info.crt_switch_resolution_super = 0;
+
          switch (video_info.crt_switch_resolution_super)
          {
             case 2560:
