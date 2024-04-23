@@ -17,6 +17,10 @@
 #define MAX_BUFFER_HEIGHT 576 //768
 
 #define INTERLACED_FB 1
+#define RGB888  0
+#define RGBA888 1
+#define RGB565  2
+#define FORCE_RGB565 0
 
 typedef struct mister_video_info
 {
@@ -29,6 +33,7 @@ typedef struct mister_video_info
    uint8_t interlaced;
    uint32_t line_time; //usec
    uint32_t frame_time; //usec
+   uint8_t rgb_mode;
 } mister_video_t;
 
 union
@@ -39,7 +44,7 @@ union
 } u;
 
 
-static void mister_init(const char* mister_host, uint8_t compression, uint32_t sound_rate, uint8_t sound_channels);
+static void mister_init(const char* mister_host, uint8_t compression, uint32_t sound_rate, uint8_t sound_channels, uint8_t pix_fmt);
 static void mister_switchres(sr_mode *srm);
 static void mister_resize_viewport(video_driver_state_t *video_st, unsigned width, unsigned height);
 
@@ -86,7 +91,7 @@ void mister_draw(video_driver_state_t *video_st, const void *data, unsigned widt
 
    // Initialize MiSTer if required
    if (!mister_video.is_connected)
-      mister_init(settings->arrays.mister_ip, settings->bools.mister_lz4, settings->uints.audio_output_sample_rate, 2);
+      mister_init(settings->arrays.mister_ip, settings->bools.mister_lz4, settings->uints.audio_output_sample_rate, 2, video_st->pix_fmt);
 
    // Send audio first
    if (audio_st->output_mister && audio_st->output_mister_samples)
@@ -249,7 +254,7 @@ void mister_draw(video_driver_state_t *video_st, const void *data, unsigned widt
    // Get first pixel address from our RGB source
    if (mister_video.interlaced)
    {
-      mister_video.field = !mister_video.field;
+      mister_video.field = !status.vgaF1 ^ ((mister_video.frame - status.frame) % 2);
       field = mister_video.field;
    }
    u.u8 = data;
@@ -338,6 +343,9 @@ void mister_draw(video_driver_state_t *video_st, const void *data, unsigned widt
       u.u8 += pitch * r_step;
    }
 
+   if (mister_video.rgb_mode == RGB565)
+      conv_bgr24_rgb565(mister_buffer, mister_buffer, width, height, width, width * 3);
+
    // Compute sync scanline based on frame delay
    int mister_vsync = 1;
    if (settings->bools.video_frame_delay_auto && video_st->frame_delay_effective > 0)
@@ -359,17 +367,19 @@ void mister_draw(video_driver_state_t *video_st, const void *data, unsigned widt
 }
 
 
-static void mister_init(const char* mister_host, uint8_t compression, uint32_t sound_rate, uint8_t sound_channels)
+static void mister_init(const char* mister_host, uint8_t compression, uint32_t sound_rate, uint8_t sound_channels, uint8_t pix_fmt)
 {
-   RARCH_LOG("[MiSTer] Sending CMD_INIT... lz4 %d sound_rate %d sound_chan %d\n", compression, sound_rate, sound_channels);
-   gmw_init(mister_host, compression, sound_rate, sound_channels, 0);
-
    mister_video.frame = 0;
    mister_video.width = 0;
    mister_video.height = 0;
    mister_video.line_time = 0;
    mister_video.frame_time = 0;
    mister_video.interlaced = 0;
+   mister_video.rgb_mode = (pix_fmt == RETRO_PIXEL_FORMAT_RGB565 || FORCE_RGB565) ? RGB565 : RGB888;
+
+   RARCH_LOG("[MiSTer] Sending CMD_INIT... lz4 %d sound_rate %d sound_chan %d rgb_mode %d\n", compression, sound_rate, sound_channels, mister_video.rgb_mode);
+   gmw_init(mister_host, compression, sound_rate, sound_channels, mister_video.rgb_mode);
+
    mister_video.is_connected = true;
 
    // Allocate buffers
@@ -400,11 +410,17 @@ void mister_audio(void)
 
 void mister_sync(void)
 {
+   if (!mister_video.is_connected)
+      return;
+
    gmw_waitSync();
 }
 
 int mister_diff_time_raster(void)
 {
+   if (!mister_video.is_connected)
+      return 0;
+
    return gmw_diffTimeRaster();
 }
 
