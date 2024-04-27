@@ -11,16 +11,12 @@
 #include <menu/menu_driver.h>
 #endif
 
-
-#define GL_VIEWPORT_HACK 1
 #define MAX_BUFFER_WIDTH 720 //1024
 #define MAX_BUFFER_HEIGHT 576 //768
 
-#define INTERLACED_FB 1
 #define RGB888  0
 #define RGBA888 1
 #define RGB565  2
-#define FORCE_RGB565 0
 
 typedef struct mister_video_info
 {
@@ -55,12 +51,14 @@ static char *menu_buffer = 0;
 static unsigned menu_width = 0;
 static unsigned menu_height = 0;
 static bool modeline_active = 0;
+static bool must_clear_buffer = 0;
 static bool mode_switch_pending = 0;
 static bool vp_resize_pending = 0;
 static bool prev_menu_state = 0;
 static struct scaler_ctx *scaler;
 static uint8_t *mister_buffer = 0;
 static uint8_t *audio_buffer = 0;
+static uint8_t *convert_buffer = 0;
 static uint8_t *scaled_buffer = 0;
 static uint8_t *hardware_buffer = 0;
 
@@ -85,7 +83,6 @@ void mister_draw(video_driver_state_t *video_st, const void *data, unsigned widt
    uint8_t format = 0;
    bool menu_on = false;
    bool stretched = false;
-   bool must_clear_buffer = false;
    bool is_hw_rendered = (data == RETRO_HW_FRAME_BUFFER_VALID
                            && video_st->frame_cache_data == RETRO_HW_FRAME_BUFFER_VALID);
 
@@ -132,6 +129,9 @@ void mister_draw(video_driver_state_t *video_st, const void *data, unsigned widt
       format = SCALER_FMT_RGBA4444;
       data = menu_buffer;
    }
+   else
+      menu_buffer = 0;
+
    if (prev_menu_state != menu_on)
    {
       prev_menu_state = menu_on;
@@ -220,6 +220,7 @@ void mister_draw(video_driver_state_t *video_st, const void *data, unsigned widt
    {
       must_clear_buffer = false;
       memset(mister_buffer, 0, MAX_BUFFER_WIDTH * MAX_BUFFER_HEIGHT * 3);
+      memset(convert_buffer, 0, MAX_BUFFER_WIDTH * MAX_BUFFER_HEIGHT * 4);
    }
 
    // Compute borders and clipping
@@ -260,11 +261,17 @@ void mister_draw(video_driver_state_t *video_st, const void *data, unsigned widt
    u.u8 = data;
    u.u8 += (field + (y_crop / 2)) * pitch + (x_crop / 2);
 
+   // Get target frame buffer
+   uint8_t *fb = mister_video.rgb_mode == RGB565 && format != SCALER_FMT_RGB565 ? convert_buffer : mister_buffer;
+
    // Compute steps to walk through the source & target bitmaps
+   uint32_t pix_size = (mister_video.rgb_mode == RGB565 && format == SCALER_FMT_RGB565) ? 2 : 3;
    uint32_t c = 0;
-   int c_step = 3;
+   int c_step = pix_size;
    int s_step = 1;
    int r_step = 1;
+
+   bool scanlines = settings->bools.mister_scanlines && y_scale >= 2.0;
 
    if (menu_on || is_hw_rendered)
       r_step = mister_video.interlaced ? 2 : 1;
@@ -273,68 +280,82 @@ void mister_draw(video_driver_state_t *video_st, const void *data, unsigned widt
    {
       case ORIENTATION_NORMAL:
       case ORIENTATION_FLIPPED:
-         c_step = 3;
+         c_step = pix_size;
          r_step = mister_video.interlaced ? 2 : 1;
          break;
 
       case ORIENTATION_VERTICAL:
-         c_step = -mister_video.width * 3;
+         c_step = -mister_video.width * pix_size;
          s_step = mister_video.interlaced ? 2 : 1;
          break;
 
       case ORIENTATION_FLIPPED_ROTATED:
-         c_step = +mister_video.width * 3;
+         c_step = +mister_video.width * pix_size;
          s_step = mister_video.interlaced ? 2 : 1;
          break;
    }
 
-   // Copy RGB buffer
+   // Copy RGB buffer as BGR24
    for (uint32_t j = 0; j < y_max - 1; j++)
    {
       if (is_hw_rendered)
-         c = (mister_video.width * (mister_video.height / r_step - y_start - field - j) + x_start) * 3;
+         c = (mister_video.width * (mister_video.height / r_step - y_start - field - j) + x_start) * pix_size;
 
       else if (menu_on || !(rotation & 1))
-         c = ((j + y_start) * mister_video.width + x_start) * 3;
+         c = ((j + y_start) * mister_video.width + x_start) * pix_size;
 
       else if (rotation == ORIENTATION_VERTICAL)
-         c = (mister_video.width * (mister_video.height / s_step - y_start - 1) + j + x_start) * 3;
+         c = (mister_video.width * (mister_video.height / s_step - y_start - 1) + j + x_start) * pix_size;
 
       else if (rotation == ORIENTATION_FLIPPED_ROTATED)
-         c = (mister_video.width * (y_start + 1) - j - x_start - 1) * 3;
+         c = (mister_video.width * (y_start + 1) - j - x_start - 1) * pix_size;
 
       for (uint32_t i = 0; i < x_max - 1; i += s_step)
       {
-         if (format == SCALER_FMT_RGBA4444)
+         if (scanlines && (j % 2))
+         {
+            fb[c + 0] = 0; //b
+            fb[c + 1] = 0; //g
+            fb[c + 2] = 0; //r
+         }
+         else if (format == SCALER_FMT_RGBA4444)
          {
             uint16_t pixel = u.u16[i];
-            mister_buffer[c + 0] = (pixel >>  8); //b
-            mister_buffer[c + 1] = (pixel >>  4); //g
-            mister_buffer[c + 2] = (pixel >>  0); //r
+            fb[c + 0] = (pixel >>  8); //b
+            fb[c + 1] = (pixel >>  4); //g
+            fb[c + 2] = (pixel >>  0); //r
          }
          else if (format == SCALER_FMT_BGR24)
          {
-            uint32_t pixel = i * 3;
-            mister_buffer[c + 0] = u.u8[pixel + 0]; //b
-            mister_buffer[c + 1] = u.u8[pixel + 1]; //g
-            mister_buffer[c + 2] = u.u8[pixel + 2]; //r
+            uint32_t pixel = i * pix_size;
+            fb[c + 0] = u.u8[pixel + 0]; //b
+            fb[c + 1] = u.u8[pixel + 1]; //g
+            fb[c + 2] = u.u8[pixel + 2]; //r
          }
          else if (format == SCALER_FMT_RGB565)
          {
             uint16_t pixel = u.u16[i];
-            uint8_t r  = (pixel >> 11) & 0x1f;
-            uint8_t g  = (pixel >>  5) & 0x3f;
-            uint8_t b  = (pixel >>  0) & 0x1f;
-            mister_buffer[c + 0] = (b << 3) | (b >> 2); //b
-            mister_buffer[c + 1] = (g << 2) | (g >> 4); //g
-            mister_buffer[c + 2] = (r << 3) | (r >> 2); //r
+            if (mister_video.rgb_mode == RGB565)
+            {
+               uint16_t *target = (uint16_t *)&fb[c];
+               *target = pixel;
+            }
+            else
+            {
+               uint8_t r  = (pixel >> 11) & 0x1f;
+               uint8_t g  = (pixel >>  5) & 0x3f;
+               uint8_t b  = (pixel >>  0) & 0x1f;
+               fb[c + 0] = (b << 3) | (b >> 2); //b
+               fb[c + 1] = (g << 2) | (g >> 4); //g
+               fb[c + 2] = (r << 3) | (r >> 2); //r
+            }
          }
          else if (format == SCALER_FMT_ARGB8888)
          {
             uint32_t pixel = u.u32[i];
-            mister_buffer[c + 0] = (pixel >>  0) & 0xff; //b
-            mister_buffer[c + 1] = (pixel >>  8) & 0xff; //g
-            mister_buffer[c + 2] = (pixel >> 16) & 0xff; //r
+            fb[c + 0] = (pixel >>  0) & 0xff; //b
+            fb[c + 1] = (pixel >>  8) & 0xff; //g
+            fb[c + 2] = (pixel >> 16) & 0xff; //r
          }
 
          c += c_step;
@@ -343,8 +364,9 @@ void mister_draw(video_driver_state_t *video_st, const void *data, unsigned widt
       u.u8 += pitch * r_step;
    }
 
-   if (mister_video.rgb_mode == RGB565)
-      conv_bgr24_rgb565(mister_buffer, mister_buffer, width, height, width, width * 3);
+   // Convert to RGB565 if required
+   if (mister_video.rgb_mode == RGB565 && format != SCALER_FMT_RGB565)
+      conv_bgr24_rgb565(mister_buffer, fb, mister_video.width, mister_video.height, mister_video.width, mister_video.width * 3);
 
    // Compute sync scanline based on frame delay
    int mister_vsync = 1;
@@ -369,13 +391,14 @@ void mister_draw(video_driver_state_t *video_st, const void *data, unsigned widt
 
 static void mister_init(const char* mister_host, uint8_t compression, uint32_t sound_rate, uint8_t sound_channels, uint8_t pix_fmt)
 {
+   settings_t *settings  = config_get_ptr();
    mister_video.frame = 0;
    mister_video.width = 0;
    mister_video.height = 0;
    mister_video.line_time = 0;
    mister_video.frame_time = 0;
    mister_video.interlaced = 0;
-   mister_video.rgb_mode = (pix_fmt == RETRO_PIXEL_FORMAT_RGB565 || FORCE_RGB565) ? RGB565 : RGB888;
+   mister_video.rgb_mode = (pix_fmt == RETRO_PIXEL_FORMAT_RGB565 || settings->bools.mister_force_rgb565) ? RGB565 : RGB888;
 
    RARCH_LOG("[MiSTer] Sending CMD_INIT... lz4 %d sound_rate %d sound_chan %d rgb_mode %d\n", compression, sound_rate, sound_channels, mister_video.rgb_mode);
    gmw_init(mister_host, compression, sound_rate, sound_channels, mister_video.rgb_mode);
@@ -385,6 +408,7 @@ static void mister_init(const char* mister_host, uint8_t compression, uint32_t s
    // Allocate buffers
    mister_buffer = (uint8_t*)gmw_get_pBufferBlit();
    audio_buffer = (uint8_t*)gmw_get_pBufferAudio();
+   convert_buffer = (uint8_t*)malloc(MAX_BUFFER_WIDTH * MAX_BUFFER_HEIGHT * 4);
    scaled_buffer = (uint8_t*)malloc(MAX_BUFFER_WIDTH * MAX_BUFFER_HEIGHT * 4);
    hardware_buffer = (uint8_t*)malloc(MAX_BUFFER_WIDTH * MAX_BUFFER_HEIGHT * 4);
 
@@ -436,6 +460,7 @@ void mister_close(void)
    mister_video.is_connected = 0;
    modeline_active = 0;
 
+   free(convert_buffer);
    free(scaled_buffer);
    free(hardware_buffer);
    mister_buffer = 0;
@@ -468,18 +493,20 @@ void mister_set_mode(sr_mode *srm)
 
 static void mister_switchres(sr_mode *srm)
 {
+   settings_t *settings  = config_get_ptr();
+
    if (srm == 0)
       return;
 
    RARCH_LOG("[MiSTer] Video_SetSwitchres - (result %dx%d@%f) - x=%.4f y=%.4f stretched(%d)\n", srm->width, srm->height,srm->vfreq, srm->x_scale, srm->y_scale, srm->is_stretched);
    RARCH_LOG("[MiSTer] Sending CMD_SWITCHRES...\n");
 
-   gmw_switchres((double)srm->pclock / 1000000.0, srm->width, srm->hbegin, srm->hend, srm->htotal, srm->height, srm->vbegin, srm->vend, srm->vtotal, srm->interlace ? (INTERLACED_FB ? 1 : 2) : 0);
+   gmw_switchres((double)srm->pclock / 1000000.0, srm->width, srm->hbegin, srm->hend, srm->htotal, srm->height, srm->vbegin, srm->vend, srm->vtotal, srm->interlace ? (settings->bools.mister_interlaced_fb ? 1 : 2) : 0);
 
    mister_video.width = srm->width;
    mister_video.height = srm->height;
    mister_video.vfreq = srm->refresh;
-   mister_video.interlaced = INTERLACED_FB ? srm->interlace : 0;
+   mister_video.interlaced = settings->bools.mister_interlaced_fb ? srm->interlace : 0;
 
    double px = (double) srm->pclock / 1000000.0;
    mister_video.line_time = round((double) srm->htotal * (1 / px)); //in usec, time to raster 1 line
@@ -498,7 +525,6 @@ static void mister_switchres(sr_mode *srm)
 
 static void mister_resize_viewport(video_driver_state_t *video_st, unsigned width, unsigned height)
 {
-#if GL_VIEWPORT_HACK
    if (string_is_equal(video_driver_get_ident(), "gl"))
    {
       gl2_t *gl = (gl2_t*)video_st->data;
@@ -554,24 +580,4 @@ static void mister_resize_viewport(video_driver_state_t *video_st, unsigned widt
       vk->readback.scaler_rgb.out_fmt     = SCALER_FMT_BGR24;
       vk->readback.scaler_rgb.scaler_type = SCALER_TYPE_POINT;
    }
-#else
-   settings_t *settings  = config_get_ptr();
-   struct video_viewport vp = { 0 };
-   video_driver_get_viewport_info(&vp);
-   uint16_t mister_width = mister_GetWidth();
-   uint16_t mister_height = mister_GetHeight();
-
-   vp.x                = 0;
-   vp.y                = 0;
-   vp.width            = mister_width;
-   vp.height           = mister_height;
-   vp.full_width       = mister_width;
-   vp.full_height      = mister_height;
-
-   video_st->aspect_ratio = aspectratio_lut[ASPECT_RATIO_CUSTOM].value;
-   settings->uints.video_aspect_ratio_idx = ASPECT_RATIO_CUSTOM;
-   settings->video_viewport_custom = vp;
-   video_driver_set_aspect_ratio();
-   video_driver_update_viewport(&vp, false, true);
-#endif
 }
