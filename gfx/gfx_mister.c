@@ -88,7 +88,7 @@ void mister_draw(video_driver_state_t *video_st, const void *data, unsigned widt
 
    // Initialize MiSTer if required
    if (!mister_video.is_connected)
-      mister_init(settings->arrays.mister_ip, settings->bools.mister_lz4, settings->uints.audio_output_sample_rate, 2, video_st->pix_fmt);
+      mister_init(settings->arrays.mister_ip, settings->uints.mister_lz4, settings->uints.audio_output_sample_rate, 2, video_st->pix_fmt);
 
    // Send audio first
    if (audio_st->output_mister && audio_st->output_mister_samples)

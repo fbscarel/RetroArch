@@ -1885,7 +1885,6 @@ static struct config_bool_setting *populate_settings_bool(
 
    SETTING_BOOL("crt_switch_resolution_use_custom_refresh_rate", &settings->bools.crt_switch_custom_refresh_enable, true, false, false);
    SETTING_BOOL("crt_switch_hires_menu",         &settings->bools.crt_switch_hires_menu, true, false, true);
-   SETTING_BOOL("mister_lz4",                    &settings->bools.mister_lz4, true, false, true); //psakhis
    SETTING_BOOL("mister_scanlines",              &settings->bools.mister_scanlines, true, false, true);
    SETTING_BOOL("mister_force_rgb565",           &settings->bools.mister_force_rgb565, true, false, true);
    SETTING_BOOL("mister_interlaced_fb",          &settings->bools.mister_interlaced_fb, true, true, true);
@@ -2510,6 +2509,7 @@ static struct config_uint_setting *populate_settings_uint(
    SETTING_UINT("custom_viewport_height",        &settings->video_vp_custom.height, false, 0 /* TODO */, false);
    SETTING_UINT("custom_viewport_x",             (unsigned*)&settings->video_vp_custom.x, false, 0 /* TODO */, false);
    SETTING_UINT("custom_viewport_y",             (unsigned*)&settings->video_vp_custom.y, false, 0 /* TODO */, false);
+   SETTING_UINT("mister_lz4",                    &settings->uints.mister_lz4, true, DEFAULT_MISTER_LZ4, false);
    SETTING_UINT("aspect_ratio_index",            &settings->uints.video_aspect_ratio_idx, true, DEFAULT_ASPECT_RATIO_IDX, false);
    SETTING_UINT("video_autoswitch_refresh_rate", &settings->uints.video_autoswitch_refresh_rate, true, DEFAULT_AUTOSWITCH_REFRESH_RATE, false);
    SETTING_UINT("video_monitor_index",           &settings->uints.video_monitor_index, true, DEFAULT_MONITOR_INDEX, false);

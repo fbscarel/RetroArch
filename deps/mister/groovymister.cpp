@@ -52,6 +52,8 @@ typedef union
 	uint8_t byte;
 } bitByte;
 
+#define LZ4_ADAPTATIVE_CSIZE 600000
+
 GroovyMister::GroovyMister()
 {
 	m_verbose = 0;
@@ -384,10 +386,10 @@ void GroovyMister::CmdSwitchres(double pClock, uint16_t hActive, uint16_t hBegin
 
 	m_RGBSize = (m_rgbMode == 1) ? (hActive * vActive) << 2 : (m_rgbMode == 2) ? (hActive * vActive) << 1 : hActive * vActive * 3;
 
-		if (interlace == 1)
-		{
-			m_RGBSize = m_RGBSize >> 1;
-		}
+	if (interlace == 1)
+	{
+		m_RGBSize = m_RGBSize >> 1;
+	}
 
 	m_widthTime = 10 * round((double) hTotal * (1 / pClock)); //in nanosec, time to raster 1 line
 	m_frameTime = (m_widthTime * vTotal) >> interlace_modeline;
@@ -431,10 +433,18 @@ void GroovyMister::CmdBlit(uint32_t frame, uint16_t vCountSync, uint32_t margin)
 	uint32_t bytesToSend = 0;
 	switch (m_lz4Frames)
 	{
+		case(3):
 		case(1): cSize = LZ4_compress_default((char *)&pBufferBlit[0], m_pBufferLZ4, m_RGBSize, m_RGBSize);
 				 break;
 		case(2): cSize = LZ4_compress_HC((char *)&pBufferBlit[0], m_pBufferLZ4, m_RGBSize, m_RGBSize, LZ4HC_CLEVEL_DEFAULT);
 			 break;
+	}
+
+	if (m_lz4Frames == 3 && cSize > LZ4_ADAPTATIVE_CSIZE)
+	{
+		cSize = LZ4_compress_HC((char *)&pBufferBlit[0], m_pBufferLZ4, m_RGBSize, m_RGBSize, LZ4HC_CLEVEL_DEFAULT);
+		m_lz4Frames = 2;
+		LOG(0,"[MiSTer] LZ4 Adaptative apply LZ4HC on frame %d\n", frame);
 	}
 
 	m_bufferSend[0] = CMD_BLIT_VSYNC;

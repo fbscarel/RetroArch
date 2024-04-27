@@ -249,6 +249,7 @@ typedef struct settings
       unsigned video_window_opacity;
       unsigned crt_switch_resolution;
       unsigned crt_switch_resolution_super;
+      unsigned mister_lz4;
       unsigned screen_brightness;
       unsigned video_monitor_index;
       unsigned video_fullscreen_x;
@@ -925,7 +926,6 @@ typedef struct settings
 
       bool crt_switch_custom_refresh_enable;
       bool crt_switch_hires_menu;
-      bool mister_lz4; //psakhis
       bool mister_scanlines;
       bool mister_force_rgb565;
       bool mister_interlaced_fb;
