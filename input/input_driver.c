@@ -295,6 +295,9 @@ input_device_driver_t *joypad_drivers[] = {
 #ifdef HAVE_TEST_DRIVERS
    &test_joypad,
 #endif
+#ifdef HAVE_MISTER //psakhis
+   &mister_joypad,
+#endif
    &null_joypad,
    NULL,
 };

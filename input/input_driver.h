@@ -102,6 +102,8 @@
 #define DEFAULT_MAX_PADS 2
 #elif defined(EMSCRIPTEN)
 #define DEFAULT_MAX_PADS 4
+#elif defined(MISTER)
+#define DEFAULT_MAX_PADS 2
 #else
 #define DEFAULT_MAX_PADS 16
 #endif /* defined(ANDROID) */
@@ -1228,6 +1230,7 @@ extern input_device_driver_t mfi_joypad;
 extern input_device_driver_t dos_joypad;
 extern input_device_driver_t rwebpad_joypad;
 extern input_device_driver_t test_joypad;
+extern input_device_driver_t mister_joypad; //psakhis
 
 #ifdef HAVE_HID
 extern hid_driver_t iohidmanager_hid;
