@@ -37,8 +37,6 @@ typedef struct _mister_joypad
    unsigned num_hats;
 } mister_joypad_t;
 
-static bool mister_input_connected = false;
-
 /* TODO/FIXME - static globals */
 static mister_joypad_t mister_pads[MAX_USERS_MISTER];
 
@@ -127,14 +125,8 @@ static void *mister_joypad_init(void *data)
 
    if (config_get_ptr()->bools.video_mister_enable)
    {
-      if (!mister_input_connected)
-      {
-         gmw_bindInputs(config_get_ptr()->arrays.mister_ip);
-         mister_input_connected = true;
-      }
-
+      gmw_bindInputs(config_get_ptr()->arrays.mister_ip);
       num_sticks = MAX_USERS_MISTER;
-
       for (i = 0; i < num_sticks; i++)
          mister_pad_connect(i);
    }
