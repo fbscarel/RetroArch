@@ -381,6 +381,9 @@ input_driver_t *input_drivers[] = {
 #ifdef HAVE_TEST_DRIVERS
    &input_test,
 #endif
+#ifdef HAVE_MISTER
+   &input_mister,
+#endif
    &input_null,
    NULL,
 };

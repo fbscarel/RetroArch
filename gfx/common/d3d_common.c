@@ -157,6 +157,18 @@ void d3d_input_driver(const char* input_name, const char* joypad_name,
 #endif
 #endif
 
+#ifdef HAVE_MISTER
+   if (string_is_equal(input_name, "mister"))
+   {
+      *input_data = input_driver_init_wrap(&input_mister, joypad_name);
+      if (*input_data)
+      {
+         *input = &input_mister;
+         return;
+      }
+   }
+#endif
+
 #ifdef HAVE_DINPUT
    *input_data = input_driver_init_wrap(&input_dinput, joypad_name);
    *input      = *input_data ? &input_dinput : NULL;

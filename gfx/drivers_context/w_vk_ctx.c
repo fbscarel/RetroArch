@@ -253,6 +253,20 @@ static void gfx_ctx_w_vk_input_driver(void *data,
 #endif
 #endif
 
+#ifdef HAVE_MISTER
+   const char *input_driver_mister = settings->arrays.input_driver;
+   if (string_is_equal(input_driver_mister, "mister"))
+   {
+      *input_data = input_driver_init_wrap(&input_mister, joypad_name);
+      if (*input_data)
+      {
+         *input    = &input_mister;
+         dinput_vk = NULL;
+         return;
+      }
+   }
+#endif
+
 #ifdef HAVE_DINPUT
    dinput_vk      = input_driver_init_wrap(&input_dinput, joypad_name);
    *input         = dinput_vk ? &input_dinput : NULL;

@@ -200,6 +200,7 @@ enum input_driver_enum
    INPUT_RWEBINPUT,
    INPUT_DOS,
    INPUT_WINRAW,
+   INPUT_MISTER,
    INPUT_NULL
 };
 
@@ -667,6 +668,8 @@ static const enum input_driver_enum INPUT_DEFAULT_DRIVER = INPUT_SDL;
 static const enum input_driver_enum INPUT_DEFAULT_DRIVER = INPUT_SDL2;
 #elif defined(DJGPP)
 static const enum input_driver_enum INPUT_DEFAULT_DRIVER = INPUT_DOS;
+#elif defined(HAVE_MISTER)
+static const enum input_driver_enum INPUT_DEFAULT_DRIVER = INPUT_MISTER;
 #else
 static const enum input_driver_enum INPUT_DEFAULT_DRIVER = INPUT_NULL;
 #endif
@@ -1227,6 +1230,8 @@ const char *config_get_default_input(void)
           return "rwebinput";
       case INPUT_DOS:
          return "dos";
+      case INPUT_MISTER:
+         return "mister";
       case INPUT_NULL:
           break;
    }
@@ -2510,6 +2515,7 @@ static struct config_uint_setting *populate_settings_uint(
    SETTING_UINT("custom_viewport_x",             (unsigned*)&settings->video_vp_custom.x, false, 0 /* TODO */, false);
    SETTING_UINT("custom_viewport_y",             (unsigned*)&settings->video_vp_custom.y, false, 0 /* TODO */, false);
    SETTING_UINT("mister_lz4",                    &settings->uints.mister_lz4, true, DEFAULT_MISTER_LZ4, false);
+   SETTING_UINT("mister_mtu",                    &settings->uints.mister_mtu, true, DEFAULT_MISTER_MTU, false);
    SETTING_UINT("aspect_ratio_index",            &settings->uints.video_aspect_ratio_idx, true, DEFAULT_ASPECT_RATIO_IDX, false);
    SETTING_UINT("video_autoswitch_refresh_rate", &settings->uints.video_autoswitch_refresh_rate, true, DEFAULT_AUTOSWITCH_REFRESH_RATE, false);
    SETTING_UINT("video_monitor_index",           &settings->uints.video_monitor_index, true, DEFAULT_MONITOR_INDEX, false);

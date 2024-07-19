@@ -32,6 +32,7 @@
 typedef struct _mister_joypad
 {
    uint16_t map;
+   int16_t axis[4];
    unsigned num_axes;
    unsigned num_buttons;
    unsigned num_hats;
@@ -98,7 +99,7 @@ static void mister_pad_connect(unsigned id)
          vendor,
          product);
 
-   pad->num_axes    = 0;
+   pad->num_axes    = 4;
    pad->num_buttons = 10;
    pad->num_hats    = 1;
 }
@@ -128,7 +129,7 @@ static void *mister_joypad_init(void *data)
       gmw_bindInputs(config_get_ptr()->arrays.mister_ip);
       num_sticks = MAX_USERS_MISTER;
       for (i = 0; i < num_sticks; i++)
-         mister_pad_connect(i);
+            mister_pad_connect(i);
    }
 
    return (void*)-1;
@@ -155,13 +156,24 @@ static int16_t mister_joypad_axis_state(
       mister_joypad_t *pad,
       unsigned port, uint32_t joyaxis)
 {
-  return 0;
+	if (AXIS_NEG_GET(joyaxis) < pad->num_axes)
+	{
+		return ((pad->axis[AXIS_NEG_GET(joyaxis)] << 8) + pad->axis[AXIS_NEG_GET(joyaxis)]);
+		//RARCH_LOG("[MiSTer] joyaxis neg %d...\n", AXIS_NEG_GET(joyaxis));
+	}
+	else if (AXIS_POS_GET(joyaxis) < pad->num_axes)
+	{
+		return ((pad->axis[AXIS_POS_GET(joyaxis)] << 8) + pad->axis[AXIS_POS_GET(joyaxis)]);
+		//RARCH_LOG("[MiSTer] joyaxis pos %d...\n", AXIS_POS_GET(joyaxis));
+	}
+
+	return 0;
 }
 
 static int16_t mister_joypad_axis(unsigned port, uint32_t joyaxis)
 {
    mister_joypad_t *pad = (mister_joypad_t*)&mister_pads[port];
-   if (!pad || !pad->map)
+   if (!pad)
       return 0;
    return mister_joypad_axis_state(pad, port, joyaxis);
 }
@@ -204,13 +216,24 @@ static int16_t mister_joypad_state(
 
 static void mister_joypad_poll(void)
 {
-   gmw_pollInputs();
-   gmw_fpgaInputs inputs;
-   gmw_getInputs(&inputs);
-   mister_joypad_t *pad1 = (mister_joypad_t*)&mister_pads[0];
-   mister_joypad_t *pad2 = (mister_joypad_t*)&mister_pads[1];
-   pad1->map = inputs.joy1;
-   pad2->map = inputs.joy2;
+   if (config_get_ptr()->bools.video_mister_enable)
+   {
+	   gmw_pollInputs();
+	   gmw_fpgaJoyInputs joyInputs;
+	   gmw_getJoyInputs(&joyInputs);
+	   mister_joypad_t *pad1 = (mister_joypad_t*)&mister_pads[0];
+	   mister_joypad_t *pad2 = (mister_joypad_t*)&mister_pads[1];
+	   pad1->map = joyInputs.joy1;
+	   pad1->axis[0] = joyInputs.joy1LXAnalog;
+	   pad1->axis[1] = joyInputs.joy1LYAnalog;
+	   pad1->axis[2] = joyInputs.joy1RXAnalog;
+	   pad1->axis[3] = joyInputs.joy1RYAnalog;
+	   pad2->map = joyInputs.joy2;
+	   pad2->axis[0] = joyInputs.joy2LXAnalog;
+	   pad2->axis[1] = joyInputs.joy2LYAnalog;
+	   pad2->axis[2] = joyInputs.joy2RXAnalog;
+	   pad2->axis[3] = joyInputs.joy2RYAnalog;
+   }
 }
 
 
