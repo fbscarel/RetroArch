@@ -69,11 +69,11 @@ MODULE_API_GMW char* gmw_get_pBufferBlit(void)
 	}
 }
 
-MODULE_API_GMW void gmw_blit(uint32_t frame, uint16_t vCountSync, uint32_t margin)
+MODULE_API_GMW void gmw_blit(uint32_t frame, uint8_t field, uint16_t vCountSync, uint32_t margin)
 {
 	if (gmw != NULL)
 	{
-		gmw->CmdBlit(frame, vCountSync, margin);
+		gmw->CmdBlit(frame, field, vCountSync, margin);
 	}
 	else
 	{

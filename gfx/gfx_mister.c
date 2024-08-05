@@ -390,7 +390,7 @@ void mister_draw(video_driver_state_t *video_st, const void *data, unsigned widt
       mister_video.frame = status.frame + 1;
 
    // Blit to MiSTer
-   gmw_blit(mister_video.frame, mister_vsync, 0);
+   gmw_blit(mister_video.frame, mister_video.field, mister_vsync, 0);
 }
 
 

@@ -35,6 +35,7 @@
 #define CMD_AUDIO 4
 #define CMD_GET_STATUS 5
 #define CMD_BLIT_VSYNC 6
+#define CMD_BLIT_FIELD_VSYNC 7
 
 typedef union
 {
@@ -53,6 +54,8 @@ typedef union
 } bitByte;
 
 #define LZ4_ADAPTATIVE_CSIZE 600000
+#define K_CONGESTION_SIZE    500000
+#define K_CONGESTION_TIME    110000
 
 GroovyMister::GroovyMister()
 {
@@ -103,10 +106,12 @@ GroovyMister::GroovyMister()
 	m_streamTime = 0;
 	m_emulationTime = 0;
 	m_mtu = 0;
+	m_doCongestionControl = 0;
 
 	memset(&m_tickStart, 0, sizeof(m_tickStart));
 	memset(&m_tickEnd, 0, sizeof(m_tickEnd));
 	memset(&m_tickSync, 0, sizeof(m_tickSync));
+	memset(&m_tickCongestion, 0, sizeof(m_tickCongestion));
 
 	DWORD totalBufferCount = 0;
 	DWORD totalBufferSize = 0;
@@ -186,7 +191,7 @@ uint8_t GroovyMister::CmdInit(const char* misterHost, uint16_t misterPort, uint8
 	if (USE_RIO)
 	{
 		LOG(0, "[MiSTer] Initialising socket registered io %s...\n","");
-		m_sockFD = ::WSASocket(AF_INET, SOCK_DGRAM, IPPROTO_UDP, NULL, 0, WSA_FLAG_NO_HANDLE_INHERIT | WSA_FLAG_OVERLAPPED | WSA_FLAG_REGISTERED_IO);
+		m_sockFD = ::WSASocket(AF_INET, SOCK_DGRAM, IPPROTO_UDP, NULL, 0, WSA_FLAG_OVERLAPPED | WSA_FLAG_REGISTERED_IO);
 		if (m_sockFD == INVALID_SOCKET)
 		{
 			LOG(0,"[MiSTer] Could not create socket : %lu", ::GetLastError());
@@ -437,7 +442,7 @@ void GroovyMister::CmdSwitchres(double pClock, uint16_t hActive, uint16_t hBegin
 	Send(&m_bufferSend[0], 26);
 }
 
-void GroovyMister::CmdBlit(uint32_t frame, uint16_t vCountSync, uint32_t margin)
+void GroovyMister::CmdBlit(uint32_t frame, uint8_t field, uint16_t vCountSync, uint32_t margin)
 {
 	m_frame = frame;
 	uint16_t vSync = vCountSync;
@@ -474,25 +479,40 @@ void GroovyMister::CmdBlit(uint32_t frame, uint16_t vCountSync, uint32_t margin)
 		LOG(0,"[MiSTer] LZ4 Adaptative apply LZ4HC on frame %d\n", frame);
 	}
 
-	m_bufferSend[0] = CMD_BLIT_VSYNC;
+	m_bufferSend[0] = CMD_BLIT_FIELD_VSYNC;
 	memcpy(&m_bufferSend[1], &frame, sizeof(frame));
-	memcpy(&m_bufferSend[5], &vSync, sizeof(vSync));
+	memcpy(&m_bufferSend[5], &field, sizeof(field));
+	memcpy(&m_bufferSend[6], &vSync, sizeof(vSync));
 	if (cSize > 0)
 	{
-		memcpy(&m_bufferSend[7], &cSize, sizeof(cSize));
+		memcpy(&m_bufferSend[8], &cSize, sizeof(cSize));
 		bytesToSend = cSize;
-		Send(&m_bufferSend[0], 11);
+		Send(&m_bufferSend[0], 12);
 	}
 	else
 	{
 		bytesToSend = m_RGBSize;
-		Send(&m_bufferSend[0], 7);
+		Send(&m_bufferSend[0], 8);
+	}
+
+	if (m_doCongestionControl)
+	{
+		m_tickStart = m_tickCongestion;
+		setTimeEnd();
+		m_streamTime = DiffTime();
+		while (m_streamTime < K_CONGESTION_TIME)
+		{
+			setTimeEnd();
+			m_streamTime = DiffTime();
+		}
 	}
 
 	setTimeStart();
 	SendStream(0, bytesToSend, cSize);
 	setTimeEnd();
 	m_streamTime = DiffTime();
+	m_tickCongestion = m_tickEnd;
+	m_doCongestionControl = (bytesToSend >= K_CONGESTION_SIZE) ? 1 : 0;
 	//printf("[DEBUG] Stream time , frame %d -> %lu\n",m_frame, m_streamTime);
 }
 

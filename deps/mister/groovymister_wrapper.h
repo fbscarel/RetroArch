@@ -118,8 +118,8 @@ MODULE_API_GMW void gmw_close(void);
 MODULE_API_GMW void gmw_switchres(double pClock, uint16_t hActive, uint16_t hBegin, uint16_t hEnd, uint16_t hTotal, uint16_t vActive, uint16_t vBegin, uint16_t vEnd, uint16_t vTotal, uint8_t interlace);
 // This buffer are registered and aligned for sending rgb. Populate it before gmw_blit
 MODULE_API_GMW char* gmw_get_pBufferBlit(void);
-// Stream frame, vCountSync = 0 for auto frame delay or number of vertical line to sync with, margin with nanoseconds for auto frame delay)
-MODULE_API_GMW void gmw_blit(uint32_t frame, uint16_t vCountSync, uint32_t margin);
+// Stream frame, field = 0 for progressive, vCountSync = 0 for auto frame delay or number of vertical line to sync with, margin with nanoseconds for auto frame delay)
+MODULE_API_GMW void gmw_blit(uint32_t frame, uint8_t field, uint16_t vCountSync, uint32_t margin);
 // This buffer are registered and aligned for sending rgb. Populate it before gmw_audio
 MODULE_API_GMW char* gmw_get_pBufferAudio(void);
 // Stream audio
@@ -154,7 +154,7 @@ typedef struct MODULE_API_GMW
 	void (*close)(void);
 	void (*switchres)(double pClock, uint16_t hActive, uint16_t hBegin, uint16_t hEnd, uint16_t hTotal, uint16_t vActive, uint16_t vBegin, uint16_t vEnd, uint16_t vTotal, uint8_t interlace);
 	char*(*get_pBufferBlit)(void);
-	void (*blit)(uint32_t frame, uint16_t vCountSync, uint32_t margin);
+	void (*blit)(uint32_t frame, uint8_t field, uint16_t vCountSync, uint32_t margin);
 	char*(*get_pBufferAudio)(void);
 	void (*audio)(uint16_t soundSize);
 	void (*waitSync)(void);
