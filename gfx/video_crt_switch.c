@@ -42,6 +42,10 @@ static sr_mode srm;
 /* Forward declarations */
 static void crt_adjust_sr_ini(videocrt_switch_t *p_switch);
 
+#ifdef HAVE_MISTER
+extern void mister_set_mode(sr_mode *srm); //fixme
+#endif
+
 /* Global local variables */
 static bool ini_overrides_loaded = false;
 static char core_name[NAME_MAX_LENGTH]; /* Same size as library_name on retroarch_data.h */

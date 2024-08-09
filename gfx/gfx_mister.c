@@ -6,6 +6,7 @@
 #include <gfx/common/gl3_defines.h>
 #include <gfx/common/vulkan_common.h>
 #include <audio/audio_driver.h>
+#include <switchres/switchres_wrapper.h>
 #include <mister/groovymister_wrapper.h>
 #ifdef HAVE_MENU
 #include <menu/menu_driver.h>
