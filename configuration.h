@@ -927,6 +927,7 @@ typedef struct settings
 
       bool crt_switch_custom_refresh_enable;
       bool crt_switch_hires_menu;
+      bool mister_force_scaler;
       bool mister_scanlines;
       bool mister_force_rgb565;
       bool mister_interlaced_fb;

@@ -21,6 +21,7 @@
 
 typedef struct mister_video_info
 {
+   bool is_error;	
    bool is_connected;
    uint32_t frame;
    uint8_t  field;
@@ -31,6 +32,7 @@ typedef struct mister_video_info
    uint32_t line_time; //usec
    uint32_t frame_time; //usec
    uint8_t rgb_mode;
+   bool delta_frames;
 } mister_video_t;
 
 union
@@ -58,6 +60,7 @@ static bool vp_resize_pending = 0;
 static bool prev_menu_state = 0;
 static struct scaler_ctx *scaler;
 static uint8_t *mister_buffer = 0;
+static uint8_t *mister_buffer_delta = 0;
 static uint8_t *audio_buffer = 0;
 static uint8_t *convert_buffer = 0;
 static uint8_t *scaled_buffer = 0;
@@ -85,7 +88,9 @@ void mister_draw(video_driver_state_t *video_st, const void *data, unsigned widt
    bool menu_on = false;
    bool stretched = false;
    bool is_hw_rendered = (data == RETRO_HW_FRAME_BUFFER_VALID
-                           && video_st->frame_cache_data == RETRO_HW_FRAME_BUFFER_VALID);
+                           && video_st->frame_cache_data == RETRO_HW_FRAME_BUFFER_VALID)
+                      || (settings->bools.mister_force_scaler 
+                           && !(menu_state_get_ptr()->flags & MENU_ST_FLAG_ALIVE));
 
    // Initialize MiSTer if required
    if (!mister_video.is_connected)
@@ -268,8 +273,12 @@ void mister_draw(video_driver_state_t *video_st, const void *data, unsigned widt
    u.u8 += (field + (y_crop / 2)) * pitch + (x_crop / 2);
 
    // Get target frame buffer
+   mister_buffer = (uint8_t*)gmw_get_pBufferBlit(field);
    uint8_t *fb = mister_video.rgb_mode == RGB565 && format != SCALER_FMT_RGB565 ? convert_buffer : mister_buffer;
-
+ 
+   if ((mister_video.rgb_mode == RGB565 && format != SCALER_FMT_RGB565))
+      mister_video.delta_frames = false;
+      
    // Compute steps to walk through the source & target bitmaps
    uint32_t pix_size = (mister_video.rgb_mode == RGB565 && format == SCALER_FMT_RGB565) ? 2 : 3;
    uint32_t c = 0;
@@ -300,7 +309,8 @@ void mister_draw(video_driver_state_t *video_st, const void *data, unsigned widt
          s_step = mister_video.interlaced ? 2 : 1;
          break;
    }
-
+   
+   uint32_t match_delta = 0;
    // Copy RGB buffer as BGR24
    for (uint32_t j = 0; j < y_max - 1; j++)
    {
@@ -319,7 +329,14 @@ void mister_draw(video_driver_state_t *video_st, const void *data, unsigned widt
       for (uint32_t i = 0; i < x_max - 1; i += s_step)
       {
          if (scanlines && (j % 2))
-         {
+         {  
+            if (mister_video.delta_frames)
+            {       
+	            match_delta += 3;
+	            mister_buffer_delta[c + 0] = 0; //b
+	            mister_buffer_delta[c + 1] = 0; //g
+	            mister_buffer_delta[c + 2] = 0; //r	
+            }
             fb[c + 0] = 0; //b
             fb[c + 1] = 0; //g
             fb[c + 2] = 0; //r
@@ -327,6 +344,39 @@ void mister_draw(video_driver_state_t *video_st, const void *data, unsigned widt
          else if (format == SCALER_FMT_RGBA4444)
          {
             uint16_t pixel = u.u16[i];
+            if (mister_video.delta_frames)
+            {
+	            if ((pixel >>  8) == fb[c + 0])
+	            {
+	            	match_delta++;
+	            	mister_buffer_delta[c + 0] = 0;	
+	            }
+	            else
+	            {
+	            	mister_buffer_delta[c + 0] = (uint8_t) (pixel >>  8) - (uint8_t) fb[c + 0];
+	            }
+	            if ((pixel >>  4) == fb[c + 1])
+	            {
+	            	match_delta++;
+	            	mister_buffer_delta[c + 1] = 0;	
+	            }
+	            else
+	            {
+	            	mister_buffer_delta[c + 1] = (uint8_t) (pixel >>  4) - (uint8_t) fb[c + 1];
+	            }
+	            if ((pixel >>  0) == fb[c + 2])
+	            {
+	            	match_delta++;
+	            	mister_buffer_delta[c + 2] = 0;	
+	            }
+	            else
+	            {
+	            	mister_buffer_delta[c + 2] = (uint8_t) (pixel >>  0) - (uint8_t) fb[c + 2];
+	            }
+            }
+            mister_buffer_delta[c + 0] = 0; //b
+            mister_buffer_delta[c + 1] = 0; //g
+            mister_buffer_delta[c + 2] = 0; //r	
             fb[c + 0] = (pixel >>  8); //b
             fb[c + 1] = (pixel >>  4); //g
             fb[c + 2] = (pixel >>  0); //r
@@ -334,6 +384,36 @@ void mister_draw(video_driver_state_t *video_st, const void *data, unsigned widt
          else if (format == SCALER_FMT_BGR24)
          {
             uint32_t pixel = i * pix_size;
+            if (mister_video.delta_frames)
+            {
+	            if (u.u8[pixel + 0] == fb[c + 0])
+	            {
+	            	match_delta++;
+	            	mister_buffer_delta[c + 0] = 0;	
+	            }
+	            else
+	            {
+	            	mister_buffer_delta[c + 0] = (uint8_t) u.u8[pixel + 0] - (uint8_t) fb[c + 0];
+	            }
+	            if (u.u8[pixel + 1] == fb[c + 1])
+	            {
+	            	match_delta++;
+	            	mister_buffer_delta[c + 1] = 0;	
+	            }
+	            else
+	            {
+	            	mister_buffer_delta[c + 1] = (uint8_t) u.u8[pixel + 1] - (uint8_t) fb[c + 1];
+	            }
+	            if (u.u8[pixel + 2] == fb[c + 2])
+	            {
+	            	match_delta++;
+	            	mister_buffer_delta[c + 2] = 0;	
+	            }
+	            else
+	            {
+	            	mister_buffer_delta[c + 2] = (uint8_t) u.u8[pixel + 2] - (uint8_t) fb[c + 2];
+	            }
+            }
             fb[c + 0] = u.u8[pixel + 0]; //b
             fb[c + 1] = u.u8[pixel + 1]; //g
             fb[c + 2] = u.u8[pixel + 2]; //r
@@ -343,7 +423,28 @@ void mister_draw(video_driver_state_t *video_st, const void *data, unsigned widt
             uint16_t pixel = u.u16[i];
             if (mister_video.rgb_mode == RGB565)
             {
-               uint16_t *target = (uint16_t *)&fb[c];
+               uint16_t *target = (uint16_t *)&fb[c]; 
+               if (mister_video.delta_frames)
+               {
+               		if (((pixel >>  0) & 0xff) == fb[c + 0])
+               		{
+               			match_delta++;
+	            		mister_buffer_delta[c + 0] = 0;
+               		}
+               		else
+               		{
+               			mister_buffer_delta[c + 0] = (uint8_t) ((pixel >>  0) & 0xff) - (uint8_t) fb[c + 0];
+               		}
+               		if (((pixel >>  8) & 0xff) == fb[c + 1])
+               		{
+               			match_delta++;
+	            		mister_buffer_delta[c + 1] = 0;
+               		}
+               		else
+               		{
+               			mister_buffer_delta[c + 1] = (uint8_t) ((pixel >>  8) & 0xff) - (uint8_t) fb[c + 1];
+               		}
+               }                     
                *target = pixel;
             }
             else
@@ -351,6 +452,36 @@ void mister_draw(video_driver_state_t *video_st, const void *data, unsigned widt
                uint8_t r  = (pixel >> 11) & 0x1f;
                uint8_t g  = (pixel >>  5) & 0x3f;
                uint8_t b  = (pixel >>  0) & 0x1f;
+               if (mister_video.delta_frames)
+               {
+	            if (((b << 3) | (b >> 2)) == fb[c + 0])
+	            {
+	            	match_delta++;
+	            	mister_buffer_delta[c + 0] = 0;	
+	            }
+	            else
+	            {
+	            	mister_buffer_delta[c + 0] = (uint8_t) ((b << 3) | (b >> 2)) - (uint8_t) fb[c + 0];
+	            }
+	            if (((g << 2) | (g >> 4)) == fb[c + 1])
+	            {
+	            	match_delta++;
+	            	mister_buffer_delta[c + 1] = 0;	
+	            }
+	            else
+	            {
+	            	mister_buffer_delta[c + 1] = (uint8_t) ((g << 2) | (g >> 4)) - (uint8_t) fb[c + 1];
+	            }
+	            if (((r << 3) | (r >> 2)) == fb[c + 2])
+	            {
+	            	match_delta++;
+	            	mister_buffer_delta[c + 2] = 0;	
+	            }
+	            else
+	            {
+	            	mister_buffer_delta[c + 2] = (uint8_t) ((r << 3) | (r >> 2)) - (uint8_t) fb[c + 2];
+	            }
+               }
                fb[c + 0] = (b << 3) | (b >> 2); //b
                fb[c + 1] = (g << 2) | (g >> 4); //g
                fb[c + 2] = (r << 3) | (r >> 2); //r
@@ -359,6 +490,36 @@ void mister_draw(video_driver_state_t *video_st, const void *data, unsigned widt
          else if (format == SCALER_FMT_ARGB8888)
          {
             uint32_t pixel = u.u32[i];
+            if (mister_video.delta_frames)
+            {
+	            if (((pixel >>  0) & 0xff) == fb[c + 0])
+	            {
+	            	match_delta++;
+	            	mister_buffer_delta[c + 0] = 0;	
+	            }
+	            else
+	            {
+	            	mister_buffer_delta[c + 0] = (uint8_t) ((pixel >>  0) & 0xff) - (uint8_t) fb[c + 0];
+	            }
+	            if (((pixel >>  8) & 0xff) == fb[c + 1])
+	            {
+	            	match_delta++;
+	            	mister_buffer_delta[c + 1] = 0;	
+	            }
+	            else
+	            {
+	            	mister_buffer_delta[c + 1] = (uint8_t) ((pixel >>  8) & 0xff) - (uint8_t) fb[c + 1];
+	            }
+	            if (((pixel >> 16) & 0xff) == fb[c + 2])
+	            {
+	            	match_delta++;
+	            	mister_buffer_delta[c + 2] = 0;	
+	            }
+	            else
+	            {
+	            	mister_buffer_delta[c + 2] = (uint8_t) ((pixel >> 16) & 0xff) - (uint8_t) fb[c + 2];
+	            }
+            }
             fb[c + 0] = (pixel >>  0) & 0xff; //b
             fb[c + 1] = (pixel >>  8) & 0xff; //g
             fb[c + 2] = (pixel >> 16) & 0xff; //r
@@ -391,12 +552,15 @@ void mister_draw(video_driver_state_t *video_st, const void *data, unsigned widt
       mister_video.frame = status.frame + 1;
 
    // Blit to MiSTer
-   gmw_blit(mister_video.frame, mister_video.field, mister_vsync, 0);
+   gmw_blit(mister_video.frame, mister_video.field, mister_vsync, 0, match_delta);
 }
 
 
 static void mister_init(const char* mister_host, uint8_t compression, uint32_t sound_rate, uint8_t sound_channels, uint8_t pix_fmt)
 {
+   if (mister_video.is_error)
+     return;
+     	
    settings_t *settings  = config_get_ptr();
    mister_video.frame = 0;
    mister_video.width = 0;
@@ -405,14 +569,23 @@ static void mister_init(const char* mister_host, uint8_t compression, uint32_t s
    mister_video.frame_time = 0;
    mister_video.interlaced = 0;
    mister_video.rgb_mode = (pix_fmt == RETRO_PIXEL_FORMAT_RGB565 || settings->bools.mister_force_rgb565) ? RGB565 : RGB888;
+   mister_video.delta_frames = (compression % 2 == 0) ? true : false;
 
    RARCH_LOG("[MiSTer] Sending CMD_INIT... lz4 %d sound_rate %d sound_chan %d rgb_mode %d mtu %d\n", compression, sound_rate, sound_channels, mister_video.rgb_mode, settings->uints.mister_mtu);
-   gmw_init(mister_host, compression, sound_rate, sound_channels, mister_video.rgb_mode, settings->uints.mister_mtu);
-
-   mister_video.is_connected = true;
+   if (gmw_init(mister_host, compression, sound_rate, sound_channels, mister_video.rgb_mode, settings->uints.mister_mtu) < 0)
+   {
+   	mister_video.is_error = true;
+   	mister_video.is_connected = false;
+   	RARCH_LOG("[MiSTer] CMD_INIT... failed\n");
+   }
+   else
+   {
+   	mister_video.is_connected = true;
+   }
 
    // Allocate buffers
-   mister_buffer = (uint8_t*)gmw_get_pBufferBlit();
+   mister_buffer = (uint8_t*)gmw_get_pBufferBlit(0);
+   mister_buffer_delta = (uint8_t*)gmw_get_pBufferBlitDelta();
    audio_buffer = (uint8_t*)gmw_get_pBufferAudio();
    convert_buffer = (uint8_t*)malloc(MAX_BUFFER_WIDTH * MAX_BUFFER_HEIGHT * 4);
    scaled_buffer = (uint8_t*)malloc(MAX_BUFFER_WIDTH * MAX_BUFFER_HEIGHT * 4);
