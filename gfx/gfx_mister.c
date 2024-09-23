@@ -146,7 +146,7 @@ void mister_draw(video_driver_state_t *video_st, const void *data, unsigned widt
    #endif
 
    // Ignore bogus frames
-   if (data == 0 || width <= 64 || height <= 64)
+   if (data == 0 || width <= 64 || height <= 64 || width > 1000)
       return;
 
    if (vp_resize_pending)
