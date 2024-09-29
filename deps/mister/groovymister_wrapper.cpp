@@ -26,7 +26,7 @@ MODULE_API_GMW int gmw_init(const char* misterHost, uint8_t lz4Frames, uint32_t 
 		gmw = new GroovyMister;
 		gmw_inputsBinded = 0;
 	}
-	return gmw->CmdInit(misterHost, 32100, lz4Frames, soundRate, soundChan, rgbMode, mtu);	
+	return gmw->CmdInit(misterHost, 32100, lz4Frames, soundRate, soundChan, rgbMode, mtu);
 }
 
 MODULE_API_GMW void gmw_close(void)

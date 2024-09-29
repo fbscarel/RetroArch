@@ -126,7 +126,7 @@ GroovyMister::GroovyMister()
 	{
 		m_pBufferBlit[i] = AllocateBufferSpace(BUFFER_SIZE, 1, totalBufferSize, totalBufferCount);
 		m_pBufferLZ4[i] = AllocateBufferSpace(BUFFER_SIZE, 1, totalBufferSize, totalBufferCount);
-	}		
+	}
 }
 
 
@@ -293,7 +293,7 @@ int GroovyMister::CmdInit(const char* misterHost, uint16_t misterPort, int lz4Fr
 		m_receiveRioBuffer.BufferId = m_receiveRioBufferId;
 		m_receiveRioBuffer.Offset = 0;
 		m_receiveRioBuffer.Length = 17;
-		
+
 		DWORD offset = 0;
 		for (int field = 0; field < 2; field++)
 		{
@@ -310,17 +310,17 @@ int GroovyMister::CmdInit(const char* misterHost, uint16_t misterPort, int lz4Fr
 				LOG(0,"[MiSTer] RIORegisterBuffer pBufferBlit[%d] Error: %lu\n", field, ::GetLastError());
 				return -1;
 			}
-	
+
 			offset = 0;
 			m_pBufsBlit[field] = new RIO_BUF[BUFFER_SLICES];
 			for (DWORD i = 0; i < BUFFER_SLICES; ++i)
 			{
 				RIO_BUF *pBuffer = m_pBufsBlit[field] + i;
-	
+
 				pBuffer->BufferId = m_sendRioBufferBlitId[field];
 				pBuffer->Offset = offset;
 				pBuffer->Length = m_mtu;
-	
+
 				offset += m_mtu;
 			}
 		}
@@ -497,7 +497,7 @@ void GroovyMister::CmdSwitchres(double pClock, uint16_t hActive, uint16_t hBegin
 {
 	if (!m_isConnected)
 	  return;
-	  
+
 	uint8_t interlace_modeline = (interlace != 2) ? interlace : 1;
 
 	m_RGBSize = (m_rgbMode == 1) ? (hActive * vActive) << 2 : (m_rgbMode == 2) ? (hActive * vActive) << 1 : hActive * vActive * 3;
@@ -509,7 +509,7 @@ void GroovyMister::CmdSwitchres(double pClock, uint16_t hActive, uint16_t hBegin
 
 	m_widthTime = 10 * round((double) hTotal * (1 / pClock)); //in nanosec, time to raster 1 line
 	m_frameTime = (m_widthTime * vTotal) >> interlace_modeline;
-	
+
 	m_interlace = interlace_modeline;
 	m_vTotal    = vTotal;
 	m_delta_enabled[0] = 0;
@@ -534,7 +534,7 @@ void GroovyMister::CmdBlit(uint32_t frame, uint8_t field, uint16_t vCountSync, u
 {
 	if (!m_isConnected)
 	  return;
-	  
+
 	m_frame = frame;
 	uint16_t vSync = vCountSync;
 
@@ -645,7 +645,7 @@ void GroovyMister::CmdBlit(uint32_t frame, uint8_t field, uint16_t vCountSync, u
 			Send(&m_bufferSend[0], 8);
 		}
 	}
-	
+
 	if (m_doCongestionControl)
 	{
 		m_tickStart = m_tickCongestion;
@@ -657,7 +657,7 @@ void GroovyMister::CmdBlit(uint32_t frame, uint8_t field, uint16_t vCountSync, u
 			m_streamTime = DiffTime();
 		}
 	}
-	
+
 	setTimeStart();
 	uint8_t buffer_blit = (cSize > 0) ? (ratio_delta < 0.95) ? 1 : 0 : field;
 	SendStream(0, buffer_blit, bytesToSend, (ratio_delta < 0.95) ? cSizeDelta : cSize);
@@ -684,7 +684,7 @@ void GroovyMister::CmdAudio(uint16_t soundSize)
 }
 
 uint32_t GroovyMister::getACK(DWORD dwMilliseconds)
-{  
+{
 	uint32_t getACKresult = 0;
 	uint32_t frameUDP = fpga.frameEcho;
 	if (dwMilliseconds > 0)
@@ -782,7 +782,7 @@ void GroovyMister::WaitSync(void)
 {
 	if (!m_isConnected)
 	  return;
-	  
+
 	m_tickStart = m_tickSync;
 	setTimeEnd();
 	m_emulationTime = DiffTime();
@@ -993,7 +993,7 @@ if (USE_RIO)
 }
 
 void GroovyMister::SendStream(uint8_t whichBuffer, uint8_t field, uint32_t bytesToSend, uint32_t cSize)
-{	
+{
 	uint32_t bytesSended = 0;
 #ifdef _WIN32
 if (USE_RIO)

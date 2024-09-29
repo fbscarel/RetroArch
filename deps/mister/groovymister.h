@@ -90,18 +90,18 @@ typedef unsigned long DWORD;
 class GroovyMister
 {
  public:
-	 
+
 	fpgaStatus fpga; 	 // Data with last received ACK
 	fpgaJoyInputs joyInputs; // Data with last joystick inputs received
 	fpgaPS2Inputs ps2Inputs; // Data with last ps2 inputs received
 
 	GroovyMister();
 	~GroovyMister();
-	
+
 	char* getPBufferBlit(uint8_t field); // This buffer are registered and aligned for sending rgb. Populate it before CmdBlit
 	char* getPBufferBlitDelta(void); // This buffer are registered and aligned for sending rgb. Populate it before CmdBlit with delta difference between actual frame and last
 	char* getPBufferAudio(void); // This buffer are registered and aligned for sending audio. Populate it before CmdAudio
-	
+
 	// Close connection
 	void CmdClose(void);
 	// Init streaming with ip, port
