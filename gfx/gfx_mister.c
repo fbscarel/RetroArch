@@ -265,10 +265,11 @@ void mister_draw(video_driver_state_t *video_st, const void *data, unsigned widt
 
    // Get first pixel address from our RGB source
    if (mister_video.interlaced)
-   {
       mister_video.field = !status.vgaF1 ^ ((mister_video.frame - status.frame) % 2);
-      field = mister_video.field;
-   }
+   else
+      mister_video.field = status.vgaF1;
+
+   field = mister_video.field;
    u.u8 = data;
    u.u8 += (field + (y_crop / 2)) * pitch + (x_crop / 2);
 
