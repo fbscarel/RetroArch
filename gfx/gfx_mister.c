@@ -2,9 +2,6 @@
 #include <verbosity.h>
 #include <gfx/gfx_mister.h>
 #include <gfx/video_frame.h>
-#include <gfx/common/gl2_common.h>
-#include <gfx/common/gl3_defines.h>
-#include <gfx/common/vulkan_common.h>
 #include <audio/audio_driver.h>
 #include <switchres/switchres_wrapper.h>
 #include <mister/groovymister_wrapper.h>
@@ -42,6 +39,10 @@ union
    const uint32_t *u32;
 } u;
 
+
+extern void gl2_resize_viewport_and_scaler(video_driver_state_t *video_st, unsigned width, unsigned height, double x_scale, double y_scale);
+extern void gl3_resize_viewport_and_scaler(video_driver_state_t *video_st, unsigned width, unsigned height, double x_scale, double y_scale);
+extern void vulkan_resize_viewport_and_scaler(video_driver_state_t *video_st, unsigned width, unsigned height, double x_scale, double y_scale);
 
 static void mister_init(const char* mister_host, uint8_t compression, uint32_t sound_rate, uint8_t sound_channels, uint8_t pix_fmt);
 static void mister_switchres(sr_mode *srm);
@@ -597,6 +598,8 @@ static void mister_init(const char* mister_host, uint8_t compression, uint32_t s
 
    // Get status to gather info from server
    gmw_getStatus(&status);
+
+   mode_switch_pending = 1;
 }
 
 
@@ -710,58 +713,11 @@ static void mister_resize_viewport(video_driver_state_t *video_st, unsigned widt
    y_scale = (retroarch_get_rotation() & 1) ? mister_mode.x_scale : mister_mode.y_scale;
 
    if (string_is_equal(video_driver_get_ident(), "gl"))
-   {
-      gl2_t *gl = (gl2_t*)video_st->data;
-      gl->video_width = width;
-      gl->video_height = height;
-      gl->vp.width = width;
-      gl->vp.height = height;
-      gl->pbo_readback_scaler.out_width = width * x_scale;
-      gl->pbo_readback_scaler.out_height = height * y_scale;
-      gl->pbo_readback_scaler.in_width = width;
-      gl->pbo_readback_scaler.in_height = height;
-      gl->pbo_readback_scaler.in_stride = width * sizeof(uint32_t);
-      gl->pbo_readback_scaler.out_stride = width * 3;
-   }
-   else if (string_is_equal(video_driver_get_ident(), "glcore"))
-   {
-      gl3_t *gl = (gl3_t*)video_st->data;
-      gl->video_width = width;
-      gl->video_height = height;
-      gl->vp.width = width;
-      gl->vp.height = height;
-      gl->pbo_readback_scaler.out_width = width * x_scale;
-      gl->pbo_readback_scaler.out_height = height * y_scale;
-      gl->pbo_readback_scaler.in_width = width;
-      gl->pbo_readback_scaler.in_height = height;
-      gl->pbo_readback_scaler.in_stride = width * sizeof(uint32_t);
-      gl->pbo_readback_scaler.out_stride = width * 3;
-   }
-   else if (string_is_equal(video_driver_get_ident(), "vulkan"))
-   {
-      vk_t *vk = (vk_t*)video_st->data;
-      vk->video_width = width;
-      vk->video_height = height;
-      vk->vp.width = width;
-      vk->vp.height = height;
-      vk->readback.scaler_bgr.in_width    = width;
-      vk->readback.scaler_bgr.in_height   = height;
-      vk->readback.scaler_bgr.out_width   = width * x_scale;
-      vk->readback.scaler_bgr.out_height  = height * y_scale;
-      vk->readback.scaler_bgr.in_stride   = width * sizeof(uint32_t);
-      vk->readback.scaler_bgr.out_stride  = width * 3;
-      vk->readback.scaler_bgr.in_fmt      = SCALER_FMT_ABGR8888;
-      vk->readback.scaler_bgr.out_fmt     = SCALER_FMT_BGR24;
-      vk->readback.scaler_bgr.scaler_type = SCALER_TYPE_POINT;
+      gl2_resize_viewport_and_scaler(video_st, width, height, x_scale, y_scale);
 
-      vk->readback.scaler_rgb.in_width    = width;
-      vk->readback.scaler_rgb.in_height   = height;
-      vk->readback.scaler_rgb.out_width   = width * x_scale;
-      vk->readback.scaler_rgb.out_height  = height * y_scale;
-      vk->readback.scaler_rgb.in_stride   = width * sizeof(uint32_t);
-      vk->readback.scaler_rgb.out_stride  = width * 3;
-      vk->readback.scaler_rgb.in_fmt      = SCALER_FMT_ARGB8888;
-      vk->readback.scaler_rgb.out_fmt     = SCALER_FMT_BGR24;
-      vk->readback.scaler_rgb.scaler_type = SCALER_TYPE_POINT;
-   }
+   else if (string_is_equal(video_driver_get_ident(), "glcore"))
+      gl3_resize_viewport_and_scaler(video_st, width, height, x_scale, y_scale);
+
+   else if (string_is_equal(video_driver_get_ident(), "vulkan"))
+      vulkan_resize_viewport_and_scaler(video_st, width, height, x_scale, y_scale);
 }

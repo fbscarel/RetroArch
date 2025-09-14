@@ -93,7 +93,7 @@ static void mister_pad_connect(unsigned id)
 
    input_autoconfigure_connect(
          mister_joypad_name(id),
-         NULL,
+         NULL, NULL,
          mister_joypad.ident,
          id,
          vendor,

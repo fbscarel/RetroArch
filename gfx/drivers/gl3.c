@@ -1947,6 +1947,21 @@ static void gl3_set_viewport(gl3_t *gl,
    gl->filter_chain_vp.height = gl->vp.height;
 }
 
+void gl3_resize_viewport_and_scaler(video_driver_state_t *video_st, unsigned width, unsigned height, double x_scale, double y_scale)
+{
+      gl3_t *gl = (gl3_t*)video_st->data;
+      gl->video_width = width;
+      gl->video_height = height;
+      gl->vp.width = width;
+      gl->vp.height = height;
+      gl->pbo_readback_scaler.out_width = width * x_scale;
+      gl->pbo_readback_scaler.out_height = height * y_scale;
+      gl->pbo_readback_scaler.in_width = width;
+      gl->pbo_readback_scaler.in_height = height;
+      gl->pbo_readback_scaler.in_stride = width * sizeof(uint32_t);
+      gl->pbo_readback_scaler.out_stride = width * 3;
+}
+
 #ifdef HAVE_SLANG
 static bool gl3_init_pipelines(gl3_t *gl)
 {

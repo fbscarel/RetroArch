@@ -56,6 +56,7 @@
 
 #ifdef HAVE_MICROPHONE
 #include "microphone_driver.h"
+#endif
 
 #ifdef HAVE_MISTER
 #include "gfx/gfx_mister.h"
@@ -707,16 +708,6 @@ bool audio_driver_init_internal(void *settings_data, bool audio_cb_inited)
 #ifdef HAVE_MISTER //psakhis
    audio_driver_st.output_mister_samples          = 0;
    audio_driver_st.output_mister                  = false;
-#endif
-
-#ifdef HAVE_REWIND
-   /* Needs to be able to hold full content of a full max_bufsamples
-    * in addition to its own. */
-   if (!(rewind_buf = (int16_t*)memalign_alloc(64, max_bufsamples * sizeof(int16_t))))
-      goto error;
-
-   audio_driver_st.rewind_buf    = rewind_buf;
-   audio_driver_st.rewind_size   = max_bufsamples;
 #endif
 
    if (!audio_enable)

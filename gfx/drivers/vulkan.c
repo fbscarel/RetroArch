@@ -3493,7 +3493,7 @@ static void vulkan_init_readback(vk_t *vk, bool video_gpu_record)
     */
    recording_state_t *rec_st = recording_state_get_ptr();
 
-   if (!(video_gpu_record && rec_st->enable) && !settings->bools.video_mister_enable)
+   if (!(video_gpu_record && rec_st->enable) && !config_get_ptr()->bools.video_mister_enable)
    {
       vk->flags                       &= ~VK_FLAG_READBACK_STREAMED;
       return;
@@ -4093,6 +4093,34 @@ static void vulkan_set_viewport(void *data, unsigned vp_width,
    vk->vk_vp.maxDepth   = 1.0f;
 
    vk->tracker.dirty |= VULKAN_DIRTY_DYNAMIC_BIT;
+}
+
+void vulkan_resize_viewport_and_scaler(video_driver_state_t *video_st, unsigned width, unsigned height, double x_scale, double y_scale)
+{
+   vk_t *vk = (vk_t*)video_st->data;
+   vk->video_width = width;
+   vk->video_height = height;
+   vk->vp.width = width;
+   vk->vp.height = height;
+   vk->readback.scaler_bgr.in_width    = width;
+   vk->readback.scaler_bgr.in_height   = height;
+   vk->readback.scaler_bgr.out_width   = width * x_scale;
+   vk->readback.scaler_bgr.out_height  = height * y_scale;
+   vk->readback.scaler_bgr.in_stride   = width * sizeof(uint32_t);
+   vk->readback.scaler_bgr.out_stride  = width * 3;
+   vk->readback.scaler_bgr.in_fmt      = SCALER_FMT_ABGR8888;
+   vk->readback.scaler_bgr.out_fmt     = SCALER_FMT_BGR24;
+   vk->readback.scaler_bgr.scaler_type = SCALER_TYPE_POINT;
+
+   vk->readback.scaler_rgb.in_width    = width;
+   vk->readback.scaler_rgb.in_height   = height;
+   vk->readback.scaler_rgb.out_width   = width * x_scale;
+   vk->readback.scaler_rgb.out_height  = height * y_scale;
+   vk->readback.scaler_rgb.in_stride   = width * sizeof(uint32_t);
+   vk->readback.scaler_rgb.out_stride  = width * 3;
+   vk->readback.scaler_rgb.in_fmt      = SCALER_FMT_ARGB8888;
+   vk->readback.scaler_rgb.out_fmt     = SCALER_FMT_BGR24;
+   vk->readback.scaler_rgb.scaler_type = SCALER_TYPE_POINT;
 }
 
 static void vulkan_readback(vk_t *vk, struct vk_image *readback_image)
