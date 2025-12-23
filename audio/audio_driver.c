@@ -625,12 +625,30 @@ static void audio_driver_flush(audio_driver_state_t *audio_st,
       settings_t *settings   = config_get_ptr();
       if (settings->bools.video_mister_enable && mister_is_connected())
       {
+         // Always convert to int16 for MiSTer (fixes float audio driver issue)
+         unsigned mister_frames = (unsigned)src_data.output_frames;
+         const int16_t *mister_data;
+
+         if (audio_st->flags & AUDIO_FLAG_USE_FLOAT)
+         {
+            // Convert float to int16 for MiSTer
+            convert_float_to_s16(audio_st->output_samples_conv_buf,
+                  (const float*)audio_st->output_samples_buf, mister_frames * 2);
+            mister_data = audio_st->output_samples_conv_buf;
+         }
+         else
+         {
+            mister_data = (const int16_t*)output_data;
+         }
+
+         unsigned mister_bytes = mister_frames * 2 * sizeof(int16_t); // stereo int16
+
          // flush buffer if needed
-         if (audio_st->output_mister_samples + output_frames > AUDIO_BUFFER_FREE_SAMPLES_COUNT)
+         if (audio_st->output_mister_samples + mister_frames * 2 > AUDIO_BUFFER_FREE_SAMPLES_COUNT)
             mister_audio();
 
-         memcpy(&audio_st->output_mister_samples_conv_buf[audio_st->output_mister_samples], output_data, output_frames << 1);
-         audio_st->output_mister_samples += output_frames;
+         memcpy(&audio_st->output_mister_samples_conv_buf[audio_st->output_mister_samples], mister_data, mister_bytes);
+         audio_st->output_mister_samples += mister_frames * 2;
       }
 #endif
 

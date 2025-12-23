@@ -296,8 +296,12 @@ void mister_draw(video_driver_state_t *video_st, const void *data, unsigned widt
    else switch (rotation)
    {
       case ORIENTATION_NORMAL:
-      case ORIENTATION_FLIPPED:
          c_step = pix_size;
+         r_step = mister_video.interlaced ? 2 : 1;
+         break;
+
+      case ORIENTATION_FLIPPED:
+         c_step = -pix_size;  // Walk backwards for 180° flip
          r_step = mister_video.interlaced ? 2 : 1;
          break;
 
@@ -319,8 +323,11 @@ void mister_draw(video_driver_state_t *video_st, const void *data, unsigned widt
       if (is_hw_rendered)
          c = (mister_video.width * (mister_video.height / r_step - y_start - field - j) + x_start) * pix_size;
 
-      else if (menu_on || !(rotation & 1))
+      else if (menu_on || rotation == ORIENTATION_NORMAL)
          c = ((j + y_start) * mister_video.width + x_start) * pix_size;
+
+      else if (rotation == ORIENTATION_FLIPPED)
+         c = ((mister_video.height - 1 - j - y_start) * mister_video.width + mister_video.width - 1 - x_start) * pix_size;
 
       else if (rotation == ORIENTATION_VERTICAL)
          c = (mister_video.width * (mister_video.height / s_step - y_start - 1) + j + x_start) * pix_size;
