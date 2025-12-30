@@ -9,12 +9,20 @@
 #include <menu/menu_driver.h>
 #endif
 
+#ifndef _WIN32
+#include <time.h>
+#endif
+
 #define MAX_BUFFER_WIDTH 720 //1024
 #define MAX_BUFFER_HEIGHT 576 //768
 
 #define RGB888  0
 #define RGBA888 1
 #define RGB565  2
+
+/* Congestion control constants (from GroovyMAME) */
+#define K_CONGESTION_SIZE 500000   /* bytes - trigger throttle for large frames */
+#define K_CONGESTION_TIME 110000   /* nanoseconds (110µs) - throttle duration */
 
 typedef struct mister_video_info
 {
@@ -66,6 +74,12 @@ static uint8_t *audio_buffer = 0;
 static uint8_t *convert_buffer = 0;
 static uint8_t *scaled_buffer = 0;
 static uint8_t *hardware_buffer = 0;
+
+/* Congestion control state */
+#ifndef _WIN32
+static struct timespec tick_congestion = {0, 0};
+static bool do_congestion_control = false;
+#endif
 
 
 bool mister_is_connected()
@@ -570,8 +584,37 @@ void mister_draw(video_driver_state_t *video_st, const void *data, unsigned widt
    if (status.frame > mister_video.frame)
       mister_video.frame = status.frame + 1;
 
+   // Calculate frame size for congestion control
+   uint32_t bytes_per_pixel = (mister_video.rgb_mode == RGB565) ? 2 : 3;
+   uint32_t frame_bytes = mister_video.width * mister_video.height * bytes_per_pixel;
+   if (mister_video.interlaced)
+      frame_bytes /= 2;
+
+#ifndef _WIN32
+   // Congestion control: throttle if previous frame was large (from GroovyMAME)
+   if (do_congestion_control)
+   {
+      struct timespec now;
+      clock_gettime(CLOCK_MONOTONIC, &now);
+      uint64_t elapsed_ns = (now.tv_sec - tick_congestion.tv_sec) * 1000000000ULL
+                          + (now.tv_nsec - tick_congestion.tv_nsec);
+      while (elapsed_ns < K_CONGESTION_TIME)
+      {
+         clock_gettime(CLOCK_MONOTONIC, &now);
+         elapsed_ns = (now.tv_sec - tick_congestion.tv_sec) * 1000000000ULL
+                    + (now.tv_nsec - tick_congestion.tv_nsec);
+      }
+   }
+#endif
+
    // Blit to MiSTer
    gmw_blit(mister_video.frame, mister_video.field, mister_vsync, 0, match_delta);
+
+#ifndef _WIN32
+   // Update congestion control state for next frame
+   clock_gettime(CLOCK_MONOTONIC, &tick_congestion);
+   do_congestion_control = (frame_bytes >= K_CONGESTION_SIZE);
+#endif
 }
 
 
