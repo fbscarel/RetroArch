@@ -38,6 +38,11 @@ typedef struct mister_video_info
    uint32_t frame_time; //usec
    uint8_t rgb_mode;
    bool delta_frames;
+   /* Desync detection */
+   uint32_t consecutive_empty_vram;  /* count of frames with vramQueue=0 */
+   uint32_t consecutive_frameskip;   /* count of frames with vgaFrameskip=1 */
+   uint32_t last_fpga_frame;         /* last seen FPGA frame counter */
+   uint32_t stalled_frames;          /* count of frames where FPGA frame didn't advance */
 } mister_video_t;
 
 union
@@ -571,7 +576,16 @@ void mister_draw(video_driver_state_t *video_st, const void *data, unsigned widt
    // Resync if required
    gmw_getStatus(&status);
 
-   // Check for FPGA sync loss (vramSynced=0 means "red/black screen" condition)
+   // Diagnostic logging every 300 frames (~5 seconds at 60fps)
+   if (mister_video.frame % 300 == 0)
+   {
+      RARCH_LOG("[MiSTer] STATUS: our_fr=%u fpga_fr=%u fpga_echo=%u vram[sync=%d rdy=%d queue=%d eof=%d] vga[fskip=%d vblank=%d f1=%d] vc=%u\n",
+         mister_video.frame, status.frame, status.frameEcho,
+         status.vramSynced, status.vramReady, status.vramQueue, status.vramEndFrame,
+         status.vgaFrameskip, status.vgaVblank, status.vgaF1, status.vCount);
+   }
+
+   // Check for FPGA sync loss (vramSynced=0 means "red screen" condition)
    if (!status.vramSynced && mister_video.frame > 10)
    {
       RARCH_WARN("[MiSTer] FPGA sync lost (vramSynced=0), triggering reconnect...\n");
@@ -579,6 +593,52 @@ void mister_draw(video_driver_state_t *video_st, const void *data, unsigned widt
       mister_video.is_connected = false;
       mister_video.is_error = false;  // Allow auto-recovery on next frame
       return;
+   }
+
+   // Check for frame counter desync (FPGA way ahead = our frames being discarded)
+   if (status.frame > mister_video.frame + 5)
+   {
+      RARCH_WARN("[MiSTer] Frame counter desync detected: FPGA=%u ours=%u (diff=%d), resyncing...\n",
+         status.frame, mister_video.frame, (int)(status.frame - mister_video.frame));
+   }
+
+   // Check for stalled FPGA (frame counter not advancing)
+   if (status.frame == mister_video.last_fpga_frame && mister_video.frame > 10)
+   {
+      mister_video.stalled_frames++;
+      if (mister_video.stalled_frames > 60)  // ~1 second of no FPGA frame updates
+      {
+         RARCH_WARN("[MiSTer] FPGA appears stalled (frame=%u stuck for %u frames), triggering reconnect...\n",
+            status.frame, mister_video.stalled_frames);
+         mister_close();
+         mister_video.is_connected = false;
+         mister_video.is_error = false;
+         return;
+      }
+   }
+   else
+   {
+      mister_video.stalled_frames = 0;
+   }
+   mister_video.last_fpga_frame = status.frame;
+
+   // Check for incomplete frames (eof=0 means FPGA missing pixels)
+   if (!status.vramEndFrame && mister_video.frame > 10)
+   {
+      mister_video.consecutive_empty_vram++;
+      if (mister_video.consecutive_empty_vram > 10)  // ~0.17 second of incomplete frames
+      {
+         RARCH_WARN("[MiSTer] Incomplete frames detected (eof=0 for %u frames), triggering reconnect...\n",
+            mister_video.consecutive_empty_vram);
+         mister_close();
+         mister_video.is_connected = false;
+         mister_video.is_error = false;
+         return;
+      }
+   }
+   else
+   {
+      mister_video.consecutive_empty_vram = 0;
    }
 
    if (status.frame > mister_video.frame)
@@ -632,6 +692,11 @@ static void mister_init(const char* mister_host, uint8_t compression, uint32_t s
    mister_video.interlaced = 0;
    mister_video.rgb_mode = (pix_fmt == RETRO_PIXEL_FORMAT_RGB565 || settings->bools.mister_force_rgb565) ? RGB565 : RGB888;
    mister_video.delta_frames = (compression % 2 == 0) ? true : false;
+   /* Initialize desync detection state */
+   mister_video.consecutive_empty_vram = 0;
+   mister_video.consecutive_frameskip = 0;
+   mister_video.last_fpga_frame = 0;
+   mister_video.stalled_frames = 0;
 
    RARCH_LOG("[MiSTer] Sending CMD_INIT... lz4 %d sound_rate %d sound_chan %d rgb_mode %d mtu %d\n", compression, sound_rate, sound_channels, mister_video.rgb_mode, settings->uints.mister_mtu);
    if (gmw_init(mister_host, compression, sound_rate, sound_channels, mister_video.rgb_mode, settings->uints.mister_mtu) < 0)
