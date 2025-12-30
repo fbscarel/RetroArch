@@ -557,6 +557,16 @@ void mister_draw(video_driver_state_t *video_st, const void *data, unsigned widt
    // Resync if required
    gmw_getStatus(&status);
 
+   // Check for FPGA sync loss (vramSynced=0 means "red/black screen" condition)
+   if (!status.vramSynced && mister_video.frame > 10)
+   {
+      RARCH_WARN("[MiSTer] FPGA sync lost (vramSynced=0), triggering reconnect...\n");
+      mister_close();
+      mister_video.is_connected = false;
+      mister_video.is_error = false;  // Allow auto-recovery on next frame
+      return;
+   }
+
    if (status.frame > mister_video.frame)
       mister_video.frame = status.frame + 1;
 
@@ -648,6 +658,7 @@ void mister_close(void)
    gmw_close();
 
    mister_video.is_connected = 0;
+   mister_video.is_error = 0;  // Reset error flag to allow auto-recovery
    modeline_active = 0;
 
    free(convert_buffer);
