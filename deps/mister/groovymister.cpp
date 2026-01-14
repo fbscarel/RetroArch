@@ -459,10 +459,10 @@ int GroovyMister::CmdInit(const char* misterHost, uint16_t misterPort, int lz4Fr
 	}
 #endif
 
-	uint32_t ackTime = getACK(60);
+	uint32_t ackTime = getACK(1000);  // 1000ms timeout to match GroovyMAME (was 60ms)
 	if (!ackTime)
 	{
-		LOG(0,"[MiSTer] ACK failed with %d ms\n", 60);
+		LOG(0,"[MiSTer] ACK failed with %d ms\n", 1000);
 		CmdClose();
 		return -1;
 	}
@@ -774,6 +774,9 @@ uint32_t GroovyMister::getACK(DWORD dwMilliseconds)
 			getACKresult = diff;
 			memcpy(&m_core_version, &m_bufferReceive[0], 1);
 		}
+		// Sleep 1ms between polls to avoid busy-wait CPU thrashing (matches GroovyMAME)
+		if (len <= 0 && !getACKresult)
+			usleep(1000);
 	} while ((len > 0) || (!getACKresult && dwNanoseconds > diff));
 	return getACKresult;
 }

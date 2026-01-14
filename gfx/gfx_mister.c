@@ -39,10 +39,14 @@ typedef struct mister_video_info
    uint8_t rgb_mode;
    bool delta_frames;
    /* Desync detection */
-   uint32_t consecutive_empty_vram;  /* count of frames with vramQueue=0 */
+   uint32_t consecutive_empty_vram;  /* count of frames with vramEndFrame=0 (eof=0) */
    uint32_t consecutive_frameskip;   /* count of frames with vgaFrameskip=1 */
    uint32_t last_fpga_frame;         /* last seen FPGA frame counter */
    uint32_t stalled_frames;          /* count of frames where FPGA frame didn't advance */
+   /* Soft recovery tracking (matches GroovyMAME approach) */
+   uint32_t consecutive_sync_failures;  /* count of consecutive vramSynced=0 */
+   uint32_t soft_recovery_attempts;     /* count of CMD_SWITCHRES retries before hard reconnect */
+   uint32_t last_reconnect_frame;       /* frame counter at last full reconnect for cooldown */
 } mister_video_t;
 
 union
@@ -586,13 +590,49 @@ void mister_draw(video_driver_state_t *video_st, const void *data, unsigned widt
    }
 
    // Check for FPGA sync loss (vramSynced=0 means "red screen" condition)
+   // Uses soft recovery approach matching GroovyMAME: try CMD_SWITCHRES first,
+   // only full reconnect after multiple failures with cooldown
    if (!status.vramSynced && mister_video.frame > 10)
    {
-      RARCH_WARN("[MiSTer] FPGA sync lost (vramSynced=0), triggering reconnect...\n");
+      mister_video.consecutive_sync_failures++;
+
+      // Try soft recovery first: resend modeline via CMD_SWITCHRES
+      if (mister_video.soft_recovery_attempts < 3)
+      {
+         RARCH_WARN("[MiSTer] FPGA sync lost (vramSynced=0), attempting soft recovery %u/3 (CMD_SWITCHRES)...\n",
+            mister_video.soft_recovery_attempts + 1);
+         mode_switch_pending = 1;  // Trigger CMD_SWITCHRES on next frame
+         mister_video.soft_recovery_attempts++;
+         return;
+      }
+
+      // Soft recovery failed - check cooldown before full reconnect (60 frames = ~1 sec at 60fps)
+      if (mister_video.frame - mister_video.last_reconnect_frame < 60)
+      {
+         RARCH_DBG("[MiSTer] Reconnect cooldown active (%u frames remaining), waiting...\n",
+            60 - (mister_video.frame - mister_video.last_reconnect_frame));
+         return;
+      }
+
+      // Full reconnect with cooldown tracking
+      RARCH_WARN("[MiSTer] Soft recovery failed after 3 attempts, triggering full reconnect...\n");
       mister_close();
       mister_video.is_connected = false;
-      mister_video.is_error = false;  // Allow auto-recovery on next frame
+      mister_video.is_error = false;
+      mister_video.last_reconnect_frame = mister_video.frame;
+      mister_video.soft_recovery_attempts = 0;
       return;
+   }
+   else if (status.vramSynced)
+   {
+      // Sync restored - reset failure counters
+      if (mister_video.consecutive_sync_failures > 0 || mister_video.soft_recovery_attempts > 0)
+      {
+         RARCH_LOG("[MiSTer] FPGA sync restored after %u failures, %u soft recovery attempts\n",
+            mister_video.consecutive_sync_failures, mister_video.soft_recovery_attempts);
+      }
+      mister_video.consecutive_sync_failures = 0;
+      mister_video.soft_recovery_attempts = 0;
    }
 
    // Check for frame counter desync (FPGA way ahead = our frames being discarded)
@@ -608,12 +648,22 @@ void mister_draw(video_driver_state_t *video_st, const void *data, unsigned widt
       mister_video.stalled_frames++;
       if (mister_video.stalled_frames > 60)  // ~1 second of no FPGA frame updates
       {
-         RARCH_WARN("[MiSTer] FPGA appears stalled (frame=%u stuck for %u frames), triggering reconnect...\n",
-            status.frame, mister_video.stalled_frames);
-         mister_close();
-         mister_video.is_connected = false;
-         mister_video.is_error = false;
-         return;
+         // Check cooldown before reconnect
+         if (mister_video.frame - mister_video.last_reconnect_frame < 60)
+         {
+            RARCH_DBG("[MiSTer] Stalled FPGA detected but reconnect cooldown active, waiting...\n");
+         }
+         else
+         {
+            RARCH_WARN("[MiSTer] FPGA appears stalled (frame=%u stuck for %u frames), triggering reconnect...\n",
+               status.frame, mister_video.stalled_frames);
+            mister_close();
+            mister_video.is_connected = false;
+            mister_video.is_error = false;
+            mister_video.last_reconnect_frame = mister_video.frame;
+            mister_video.soft_recovery_attempts = 0;
+            return;
+         }
       }
    }
    else
@@ -622,22 +672,47 @@ void mister_draw(video_driver_state_t *video_st, const void *data, unsigned widt
    }
    mister_video.last_fpga_frame = status.frame;
 
-   // Check for incomplete frames (eof=0 means FPGA missing pixels)
+   // Check for incomplete frames (eof=0 means FPGA pixel buffer not complete)
+   // Note: eof=0 is NORMAL after CMD_SWITCHRES while FPGA syncs to new resolution
+   // Only trigger recovery if PERSISTENT incomplete frames detected (~1 second)
    if (!status.vramEndFrame && mister_video.frame > 10)
    {
       mister_video.consecutive_empty_vram++;
-      if (mister_video.consecutive_empty_vram > 10)  // ~0.17 second of incomplete frames
+      if (mister_video.consecutive_empty_vram > 60)  // ~1 second at 60fps - allows FPGA time to sync
       {
-         RARCH_WARN("[MiSTer] Incomplete frames detected (eof=0 for %u frames), triggering reconnect...\n",
-            mister_video.consecutive_empty_vram);
-         mister_close();
-         mister_video.is_connected = false;
-         mister_video.is_error = false;
-         return;
+         // Check cooldown before any recovery action
+         if (mister_video.frame - mister_video.last_reconnect_frame < 60)
+         {
+            RARCH_DBG("[MiSTer] Persistent eof=0 but reconnect cooldown active, waiting...\n");
+         }
+         else
+         {
+            // Try soft recovery first: resend CMD_SWITCHRES (matches GroovyMAME approach of not checking eof)
+            if (mister_video.soft_recovery_attempts < 3)
+            {
+               RARCH_WARN("[MiSTer] Persistent eof=0 for %u frames, attempting soft recovery %u/3 (CMD_SWITCHRES)...\n",
+                  mister_video.consecutive_empty_vram, mister_video.soft_recovery_attempts + 1);
+               mode_switch_pending = 1;
+               mister_video.soft_recovery_attempts++;
+               mister_video.consecutive_empty_vram = 0;  // Reset for next observation period
+               return;
+            }
+
+            // Soft recovery exhausted, full reconnect
+            RARCH_WARN("[MiSTer] Soft recovery failed after 3 attempts, triggering full reconnect...\n");
+            mister_close();
+            mister_video.is_connected = false;
+            mister_video.is_error = false;
+            mister_video.last_reconnect_frame = mister_video.frame;
+            mister_video.soft_recovery_attempts = 0;
+            mister_video.consecutive_empty_vram = 0;
+            return;
+         }
       }
    }
-   else
+   else if (status.vramEndFrame && mister_video.consecutive_empty_vram > 0)
    {
+      // eof=1 confirms FPGA is synced - reset counter
       mister_video.consecutive_empty_vram = 0;
    }
 
@@ -697,6 +772,10 @@ static void mister_init(const char* mister_host, uint8_t compression, uint32_t s
    mister_video.consecutive_frameskip = 0;
    mister_video.last_fpga_frame = 0;
    mister_video.stalled_frames = 0;
+   /* Initialize soft recovery state (matches GroovyMAME approach) */
+   mister_video.consecutive_sync_failures = 0;
+   mister_video.soft_recovery_attempts = 0;
+   mister_video.last_reconnect_frame = 0;
 
    RARCH_LOG("[MiSTer] Sending CMD_INIT... lz4 %d sound_rate %d sound_chan %d rgb_mode %d mtu %d\n", compression, sound_rate, sound_channels, mister_video.rgb_mode, settings->uints.mister_mtu);
    if (gmw_init(mister_host, compression, sound_rate, sound_channels, mister_video.rgb_mode, settings->uints.mister_mtu) < 0)
@@ -829,6 +908,10 @@ static void mister_switchres(sr_mode *srm)
 
    modeline_active = 1;
    mode_switch_pending = 0;
+
+   // Reset incomplete frame counter after mode switch
+   // The FPGA will report eof=0 while flushing/syncing to new resolution - this is normal
+   mister_video.consecutive_empty_vram = 0;
 }
 
 
