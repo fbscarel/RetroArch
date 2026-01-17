@@ -5689,7 +5689,8 @@ static void input_keys_pressed(
       const input_device_driver_t *joypad,
       const input_device_driver_t *sec_joypad,
       rarch_joypad_info_t *joypad_info,
-      bool input_hotkey_device_merge)
+      bool input_hotkey_device_merge,
+      bool all_users_control_hotkeys)
 {
    unsigned i;
    /* Autoconf binds are indexed by joy_idx, not frontend port */
@@ -5850,8 +5851,9 @@ static void input_keys_pressed(
          BIT256_SET_PTR(p_new_state, RARCH_ENABLE_HOTKEY);
    }
 
-   /* Hotkeys are only relevant for the first user or core port */
-   if (port != hotkey_port)
+   /* Hotkeys are only relevant for the first user or core port,
+    * unless all_users_control_hotkeys is enabled */
+   if (port != hotkey_port && !all_users_control_hotkeys)
       return;
 
    /* Check hotkeys to block keyboard and joypad hotkeys separately.
@@ -5981,8 +5983,38 @@ static void input_keys_pressed(
    for (i = RARCH_FIRST_META_KEY; i < RARCH_BIND_LIST_END; i++)
    {
       bool other_pressed = input_keys_pressed_other_sources(input_st, i, p_new_state);
-      bool bit_pressed   = binds[port][i].valid
-            && input_state_wrap(
+      bool bit_pressed   = false;
+
+      if (binds[port][i].valid)
+      {
+         /* When all_users_control_hotkeys is enabled, check ALL joypad devices
+          * for the hotkey binding, not just the one assigned to this port.
+          * This allows hotkeys to be triggered from any connected controller. */
+         if (all_users_control_hotkeys)
+         {
+            unsigned j;
+            for (j = 0; j < MAX_USERS && !bit_pressed; j++)
+            {
+               rarch_joypad_info_t tmp_joypad_info;
+               tmp_joypad_info.axis_threshold = joypad_info->axis_threshold;
+               tmp_joypad_info.joy_idx        = j;
+               tmp_joypad_info.auto_binds     = input_autoconf_binds[j];
+
+               bit_pressed = input_state_wrap(
+                     input_st->current_driver,
+                     input_st->current_data,
+                     input_st->primary_joypad,
+                     sec_joypad,
+                     &tmp_joypad_info,
+                     binds,
+                     (input_st->flags & INP_FLAG_KB_MAPPING_BLOCKED) ? true : false,
+                     j, RETRO_DEVICE_JOYPAD, 0,
+                     i);
+            }
+         }
+         else
+         {
+            bit_pressed = input_state_wrap(
                   input_st->current_driver,
                   input_st->current_data,
                   input_st->primary_joypad,
@@ -5992,6 +6024,8 @@ static void input_keys_pressed(
                   (input_st->flags & INP_FLAG_KB_MAPPING_BLOCKED) ? true : false,
                   port, RETRO_DEVICE_JOYPAD, 0,
                   i);
+         }
+      }
 
       if (     bit_pressed
             || other_pressed
@@ -6976,7 +7010,8 @@ void input_driver_collect_system_input(input_driver_state_t *input_st,
             joypad,
             sec_joypad,
             &joypad_info,
-            settings->bools.input_hotkey_device_merge);
+            settings->bools.input_hotkey_device_merge,
+            settings->bools.input_all_users_control_hotkeys);
 
 #ifdef HAVE_MENU
       if (menu_is_alive)

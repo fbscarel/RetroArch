@@ -6008,11 +6008,17 @@ static enum runloop_state_enum runloop_check_state(
    /* Check menu hotkey */
    {
       static bool old_pressed = false;
+      /* Cooldown timer to prevent rapid menu toggling when combo is held.
+       * After a menu toggle, ignore further toggles for MENU_TOGGLE_COOLDOWN_US. */
+      static retro_time_t last_toggle_time = 0;
+#define MENU_TOGGLE_COOLDOWN_US 300000  /* 300ms cooldown */
+
       bool pressed            = BIT256_GET(current_bits, RARCH_MENU_TOGGLE)
             && !string_is_equal(settings->arrays.menu_driver, "null");
       bool core_type_is_dummy = runloop_st->current_core_type == CORE_TYPE_DUMMY;
+      bool cooldown_active    = (current_time - last_toggle_time) < MENU_TOGGLE_COOLDOWN_US;
 
-      if (pressed && !old_pressed)
+      if (pressed && !old_pressed && !cooldown_active)
       {
          bool core_is_running    = runloop_st->flags & RUNLOOP_FLAG_CORE_RUNNING;
 
@@ -6023,12 +6029,15 @@ static enum runloop_state_enum runloop_check_state(
          }
          else
             retroarch_menu_running();
+
+         /* Record toggle time for cooldown */
+         last_toggle_time = current_time;
       }
       /* Initial menu toggle on startup */
       else if (core_type_is_dummy && !(menu_st->flags & MENU_ST_FLAG_ALIVE))
          retroarch_menu_running();
 
-      old_pressed             = pressed;
+      old_pressed = pressed;
    }
 #endif
 

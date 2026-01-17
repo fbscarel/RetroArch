@@ -3469,20 +3469,27 @@ static void menu_input_key_bind_poll_bind_state(
 
    state->skip                = timed_out;
 
+   /* Poll ALL joypad ports so binding can capture input from any controller,
+    * not just the one assigned to the specific user port.
+    * This allows hotkey binding to work from any connected controller. */
    if (joypad)
    {
+      unsigned p;
       if (joypad->poll)
          joypad->poll();
-      menu_input_key_bind_poll_bind_state_internal(
-            joypad, state, port, timed_out);
+      for (p = 0; p < MAX_USERS; p++)
+         menu_input_key_bind_poll_bind_state_internal(
+               joypad, state, p, timed_out);
    }
 
    if (sec_joypad)
    {
+      unsigned p;
       if (sec_joypad->poll)
          sec_joypad->poll();
-      menu_input_key_bind_poll_bind_state_internal(
-            sec_joypad, state, port, timed_out);
+      for (p = 0; p < MAX_USERS; p++)
+         menu_input_key_bind_poll_bind_state_internal(
+               sec_joypad, state, p, timed_out);
    }
 }
 

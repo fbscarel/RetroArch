@@ -981,6 +981,8 @@
 #define DEFAULT_ALL_USERS_CONTROL_MENU false
 #endif
 
+#define DEFAULT_ALL_USERS_CONTROL_HOTKEYS false
+
 #define DEFAULT_QUIT_PRESS_TWICE true
 
 #define DEFAULT_LOG_TO_FILE false
